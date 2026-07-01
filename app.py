@@ -1,4 +1,6 @@
+import html
 import io
+import json
 import math
 import random
 import re
@@ -8,10 +10,11 @@ from typing import Dict, List, Set, Tuple
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 # ============================================================
-# Configuracao da pagina
+# Configuração da página
 # ============================================================
 
 st.set_page_config(
@@ -22,7 +25,7 @@ st.set_page_config(
 
 st.title("⚙️ Sistema de Balanceamento de Linha")
 st.caption(
-    "Informe atividades, tempos e precedencias. Escolha uma heuristica e rode o balanceamento por estacoes."
+    "Informe atividades, tempos e precedências. Escolha uma heurística e rode o balanceamento por estações."
 )
 
 
@@ -32,35 +35,35 @@ st.caption(
 
 SAMPLE_DATA = pd.DataFrame(
     [
-        {"Atividade": "A", "Tempo": 12, "Precedencias": ""},
-        {"Atividade": "B", "Tempo": 10, "Precedencias": "A"},
-        {"Atividade": "C", "Tempo": 8, "Precedencias": "A"},
-        {"Atividade": "D", "Tempo": 15, "Precedencias": "B"},
-        {"Atividade": "E", "Tempo": 7, "Precedencias": "B, C"},
-        {"Atividade": "F", "Tempo": 12, "Precedencias": "C"},
-        {"Atividade": "G", "Tempo": 9, "Precedencias": "D"},
-        {"Atividade": "H", "Tempo": 10, "Precedencias": "D, E"},
-        {"Atividade": "I", "Tempo": 6, "Precedencias": "E"},
-        {"Atividade": "J", "Tempo": 11, "Precedencias": "F"},
-        {"Atividade": "K", "Tempo": 8, "Precedencias": "G, H"},
-        {"Atividade": "L", "Tempo": 14, "Precedencias": "H, I"},
-        {"Atividade": "M", "Tempo": 7, "Precedencias": "J"},
-        {"Atividade": "N", "Tempo": 10, "Precedencias": "K, L"},
-        {"Atividade": "O", "Tempo": 8, "Precedencias": "M, N"},
-        {"Atividade": "P", "Tempo": 6, "Precedencias": "O"},
-        {"Atividade": "Q", "Tempo": 9, "Precedencias": "I, J"},
-        {"Atividade": "R", "Tempo": 5, "Precedencias": "L, Q"},
+        {"Atividade": "A", "Tempo": 12, "Precedências": ""},
+        {"Atividade": "B", "Tempo": 10, "Precedências": "A"},
+        {"Atividade": "C", "Tempo": 8, "Precedências": "A"},
+        {"Atividade": "D", "Tempo": 15, "Precedências": "B"},
+        {"Atividade": "E", "Tempo": 7, "Precedências": "B, C"},
+        {"Atividade": "F", "Tempo": 12, "Precedências": "C"},
+        {"Atividade": "G", "Tempo": 9, "Precedências": "D"},
+        {"Atividade": "H", "Tempo": 10, "Precedências": "D, E"},
+        {"Atividade": "I", "Tempo": 6, "Precedências": "E"},
+        {"Atividade": "J", "Tempo": 11, "Precedências": "F"},
+        {"Atividade": "K", "Tempo": 8, "Precedências": "G, H"},
+        {"Atividade": "L", "Tempo": 14, "Precedências": "H, I"},
+        {"Atividade": "M", "Tempo": 7, "Precedências": "J"},
+        {"Atividade": "N", "Tempo": 10, "Precedências": "K, L"},
+        {"Atividade": "O", "Tempo": 8, "Precedências": "M, N"},
+        {"Atividade": "P", "Tempo": 6, "Precedências": "O"},
+        {"Atividade": "Q", "Tempo": 9, "Precedências": "I, J"},
+        {"Atividade": "R", "Tempo": 5, "Precedências": "L, Q"},
     ]
 )
 
 EMPTY_DATA = pd.DataFrame(
     [
-        {"Atividade": "", "Tempo": None, "Precedencias": ""},
+        {"Atividade": "", "Tempo": None, "Precedências": ""},
     ]
 )
 
 HEURISTIC_OPTIONS = {
-    "Maior Tempo de Operacao (Largest Candidate Rule, LCR)": "LCR",
+    "Maior Tempo de Operação (Largest Candidate Rule, LCR)": "LCR",
     "Peso Posicional Ranqueado (Ranked Positional Weight, RPW/Helgeson-Birnie)": "RPW",
     "Kilbridge-Wester": "KW",
     "J-Wagon": "JWAGON",
@@ -79,6 +82,21 @@ STATION_COLORS = [
     "#06b6d4",
     "#f97316",
 ]
+
+
+def reset_outputs_and_go_home() -> None:
+    keys_to_remove = [
+        "last_solution",
+        "node_offsets",
+        "station_filter_diagram",
+        "show_internal_edges_diagram",
+        "show_labels_diagram",
+    ]
+    for key in keys_to_remove:
+        st.session_state.pop(key, None)
+    st.session_state["result_page"] = "Estações"
+    st.session_state["input_mode"] = "Digitar ou editar tabela"
+
 
 
 # ============================================================
@@ -125,7 +143,7 @@ def parse_precedence_cell(value) -> List[str]:
 
 def standardize_input_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
-        return pd.DataFrame(columns=["Atividade", "Tempo", "Precedencias"])
+        return pd.DataFrame(columns=["Atividade", "Tempo", "Precedências"])
 
     df = df.copy()
     original_columns = list(df.columns)
@@ -142,12 +160,12 @@ def standardize_input_df(df: pd.DataFrame) -> pd.DataFrame:
         "duracao": "Tempo",
         "time": "Tempo",
         "duration": "Tempo",
-        "precedencias": "Precedencias",
-        "precedencia": "Precedencias",
-        "predecessoras": "Precedencias",
-        "predecessores": "Precedencias",
-        "predecessors": "Precedencias",
-        "predecessor": "Precedencias",
+        "precedencias": "Precedências",
+        "precedencia": "Precedências",
+        "predecessoras": "Precedências",
+        "predecessores": "Precedências",
+        "predecessors": "Precedências",
+        "predecessor": "Precedências",
     }
 
     rename = {}
@@ -157,7 +175,7 @@ def standardize_input_df(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.rename(columns=rename)
 
-    required = ["Atividade", "Tempo", "Precedencias"]
+    required = ["Atividade", "Tempo", "Precedências"]
     for col in required:
         if col not in df.columns:
             df[col] = "" if col != "Tempo" else None
@@ -165,7 +183,7 @@ def standardize_input_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df[required]
     df["Atividade"] = df["Atividade"].apply(normalize_activity)
     df["Tempo"] = pd.to_numeric(df["Tempo"], errors="coerce")
-    df["Precedencias"] = df["Precedencias"].fillna("").astype(str).str.strip()
+    df["Precedências"] = df["Precedências"].fillna("").astype(str).str.strip()
     df = df[df["Atividade"] != ""].reset_index(drop=True)
     return df
 
@@ -253,55 +271,55 @@ def make_manual_pdf_bytes() -> bytes:
     content_lines = [
         ("title", "Manual do Sistema de Balanceamento de Linha"),
         ("h1", "1. Objetivo"),
-        ("p", "Este sistema monta uma solucao heuristica para o balanceamento de linha com atividades, tempos de operacao e relacoes de precedencia."),
-        ("p", "O usuario informa o tempo de ciclo e escolhe uma heuristica. O sistema distribui as atividades em estacoes, calcula metricas e gera tabelas e graficos."),
-        ("h1", "2. Hipoteses do modelo"),
-        ("p", "O sistema considera uma linha com 1 trabalhador por estacao."),
-        ("p", "As atividades nao podem ser divididas entre estacoes."),
-        ("p", "Cada atividade tem tempo deterministico e maior que zero."),
-        ("p", "As precedencias precisam formar uma rede sem ciclos."),
-        ("p", "Uma atividade pode ficar na mesma estacao de sua predecessora, desde que a ordem interna seja respeitada."),
+        ("p", "Este sistema monta uma solução heurística para o balanceamento de linha com atividades, tempos de operação e relações de precedência."),
+        ("p", "O usuário informa o tempo de ciclo e escolhe uma heurística. O sistema distribui as atividades em estações, calcula métricas e gera tabelas e gráficos."),
+        ("h1", "2. Hipóteses do modelo"),
+        ("p", "O sistema considera uma linha com 1 trabalhador por estação."),
+        ("p", "As atividades não podem ser divididas entre estações."),
+        ("p", "Cada atividade tem tempo determinístico e maior que zero."),
+        ("p", "As precedências precisam formar uma rede sem ciclos."),
+        ("p", "Uma atividade pode ficar na mesma estação de sua predecessora, desde que a ordem interna seja respeitada."),
         ("p", "O tempo de cada atividade precisa ser menor ou igual ao tempo de ciclo."),
-        ("p", "Os metodos sao heuristicos. Portanto, eles buscam uma boa solucao, mas nao garantem o otimo global."),
+        ("p", "Os métodos são heurísticos. Portanto, eles buscam uma boa solução, mas não garantem o ótimo global."),
         ("h1", "3. Formato dos dados"),
-        ("p", "A tabela precisa ter as colunas Atividade, Tempo e Precedencias."),
-        ("p", "Em Precedencias, informe as atividades predecessoras separadas por virgula. Se nao houver predecessora, deixe em branco."),
-        ("p", "Exemplo: A com tempo 20 e sem precedencia. B com tempo 6 e precedencia A. E com tempo 15 e precedencias C, D."),
+        ("p", "A tabela precisa ter as colunas Atividade, Tempo e Precedências."),
+        ("p", "Em Precedências, informe as atividades predecessoras separadas por vírgula. Se não houver predecessora, deixe em branco."),
+        ("p", "Exemplo: A com tempo 20 e sem precedência. B com tempo 6 e precedência A. E com tempo 15 e precedências C, D."),
         ("h1", "4. Entrada manual"),
-        ("p", "Use a opcao Digitar ou editar tabela. O sistema ja abre com um exemplo preenchido. O botao Limpar tabela apaga o exemplo para permitir inserir novos dados."),
-        ("h1", "5. Importacao por TXT"),
-        ("p", "Use a opcao Importar TXT. Baixe o modelo TXT, edite o arquivo e importe novamente. O separador recomendado e ponto e virgula."),
-        ("h1", "6. Importacao por Excel"),
-        ("p", "Use a opcao Importar Excel. Baixe o modelo Excel, edite a planilha e importe novamente."),
-        ("h1", "7. Heuristicas disponiveis"),
-        ("h2", "7.1 Maior Tempo de Operacao (Largest Candidate Rule, LCR)"),
-        ("p", "Ordena as atividades candidatas pelo maior tempo de operacao. Em cada estacao, seleciona a maior atividade elegivel que ainda cabe no tempo restante."),
-        ("p", "A ideia e alocar primeiro atividades longas para reduzir a chance de sobras grandes no fim do balanceamento."),
+        ("p", "Use a opção Digitar ou editar tabela. O sistema já abre com um exemplo preenchido. O botão Limpar tabela apaga o exemplo para permitir inserir novos dados."),
+        ("h1", "5. Importação por TXT"),
+        ("p", "Use a opção Importar TXT. Baixe o modelo TXT, edite o arquivo e importe novamente. O separador recomendado é ponto e vírgula."),
+        ("h1", "6. Importação por Excel"),
+        ("p", "Use a opção Importar Excel. Baixe o modelo Excel, edite a planilha e importe novamente."),
+        ("h1", "7. Heurísticas disponíveis"),
+        ("h2", "7.1 Maior Tempo de Operação (Largest Candidate Rule, LCR)"),
+        ("p", "Ordena as atividades candidatas pelo maior tempo de operação. Em cada estação, seleciona a maior atividade elegível que ainda cabe no tempo restante."),
+        ("p", "A ideia é alocar primeiro atividades longas para reduzir a chance de sobras grandes no fim do balanceamento."),
         ("h2", "7.2 Peso Posicional Ranqueado (RPW/Helgeson-Birnie)"),
         ("p", "Calcula o peso posicional de cada atividade como o tempo da atividade somado aos tempos de todos os seus sucessores diretos e indiretos."),
-        ("p", "Em cada estacao, seleciona a atividade elegivel com maior peso posicional que ainda cabe no tempo restante."),
+        ("p", "Em cada estação, seleciona a atividade elegível com maior peso posicional que ainda cabe no tempo restante."),
         ("h2", "7.3 Kilbridge-Wester"),
-        ("p", "Agrupa as atividades em colunas ou niveis de precedencia. Atividades mais proximas do inicio da rede recebem prioridade antes das atividades de colunas posteriores."),
-        ("p", "No app, entre atividades elegiveis, o metodo prioriza a menor coluna. Em caso de empate, usa maior tempo e maior numero de sucessores."),
+        ("p", "Agrupa as atividades em colunas ou níveis de precedência. Atividades mais próximas do inicio da rede recebem prioridade antes das atividades de colunas posteriores."),
+        ("p", "No app, entre atividades elegíveis, o metodo prioriza a menor coluna. Em caso de empate, usa maior tempo e maior número de sucessores."),
         ("h2", "7.4 J-Wagon"),
-        ("p", "Prioriza atividades com maior numero de sucessores na rede de precedencia. A logica e antecipar atividades que liberam mais trabalho posterior."),
-        ("p", "No app, o desempate usa maior numero de sucessores imediatos, maior tempo de operacao e maior peso posicional."),
+        ("p", "Prioriza atividades com maior número de sucessores na rede de precedência. A lógica e antecipar atividades que liberam mais trabalho posterior."),
+        ("p", "No app, o desempate usa maior número de sucessores imediatos, maior tempo de operação e maior peso posicional."),
         ("h2", "7.5 COMSOAL"),
-        ("p", "Constroi solucoes aleatorias viaveis. Em cada passo, forma uma lista de atividades elegiveis que respeitam as precedencias e cabem no tempo restante da estacao."),
-        ("p", "O metodo sorteia uma atividade dessa lista, completa a estacao e repete o processo. O app executa varias tentativas e guarda a melhor solucao encontrada."),
-        ("p", "A semente aleatoria permite repetir o mesmo resultado quando necessario."),
+        ("p", "Constrói soluções aleatórias viáveis. Em cada passo, forma uma lista de atividades elegíveis que respeitam as precedências e cabem no tempo restante da estação."),
+        ("p", "O método sorteia uma atividade dessa lista, completa a estação e repete o processo. O app executa várias tentativas e guarda a melhor solução encontrada."),
+        ("p", "A semente aleatoria permite repetir o mesmo resultado quando necessário."),
         ("h1", "8. Resultados"),
-        ("p", "O sistema mostra a quantidade de estacoes, minimo teorico, eficiencia, tempo ocioso, atraso de balanceamento e indice de suavidade."),
-        ("p", "Tambem gera a tabela de estacoes, a tabela de atividades, o diagrama de precedencias por estacao e o grafico de ocupacao por estacao."),
-        ("h1", "9. Diagrama de precedencias por estacao"),
-        ("p", "O diagrama usa cores para identificar as estacoes e posiciona as atividades em colunas por estacao, em uma forma parecida com softwares de balanceamento de linha."),
-        ("p", "Por padrao, o diagrama mostra todas as relacoes de precedencia, inclusive as ligacoes internas da mesma estacao."),
-        ("p", "O usuario pode ocultar as ligacoes internas se desejar uma visualizacao mais limpa, sem alterar o calculo."),
-        ("p", "O tamanho dos nos e ajustado automaticamente de acordo com a quantidade de atividades visiveis."),
-        ("p", "Tambem e possivel ajustar a posicao vertical dos nos para melhorar a leitura do desenho."),
-        ("p", "Em exemplos grandes, use o filtro de estacoes, zoom e o mouse sobre os nos para ler as atividades sem poluir o grafico."),
+        ("p", "O sistema mostra a quantidade de estações, mínimo teórico, eficiência, tempo ocioso, atraso de balanceamento e índice de suavidade."),
+        ("p", "Também gera a tabela de estações, a tabela de atividades, o diagrama de precedências por estação e o gráfico de ocupação por estação."),
+        ("h1", "9. Diagrama de precedências por estação"),
+        ("p", "O diagrama usa cores para identificar as estações e posiciona as atividades em colunas por estação, em uma forma parecida com softwares de balanceamento de linha."),
+        ("p", "Por padrão, o diagrama mostra todas as relações de precedência, inclusive as ligações internas da mesma estação."),
+        ("p", "O usuário pode ocultar as ligações internas se desejar uma visualizacao mais limpa, sem alterar o calculo."),
+        ("p", "O tamanho dos nós é ajustado automaticamente de acordo com a quantidade de atividades visíveis."),
+        ("p", "Também é possível ajustar a posição vertical dos nós para melhorar a leitura do desenho."),
+        ("p", "Em exemplos grandes, use o filtro de estações, zoom e o mouse sobre os nós para ler as atividades sem poluir o gráfico."),
         ("h1", "10. Downloads"),
-        ("p", "O usuario pode baixar os resultados em Excel e em TXT apos rodar o balanceamento."),
+        ("p", "O usuário pode baixar os resultados em Excel e em TXT após rodar o balanceamento."),
     ]
 
     pages = []
@@ -402,16 +420,16 @@ def build_problem(df: pd.DataFrame) -> Tuple[List[str], Dict[str, float], Dict[s
     df = standardize_input_df(df)
 
     if df.empty:
-        raise ValueError("A tabela esta vazia. Informe pelo menos uma atividade.")
+        raise ValueError("A tabela está vazia. Informe pelo menos uma atividade.")
 
     if df["Atividade"].duplicated().any():
         dup = df.loc[df["Atividade"].duplicated(), "Atividade"].tolist()
-        raise ValueError(f"Ha atividades repetidas: {', '.join(dup)}.")
+        raise ValueError(f"Há atividades repetidas: {', '.join(dup)}.")
 
     if df["Tempo"].isna().any() or (df["Tempo"] <= 0).any():
         invalid = df.loc[df["Tempo"].isna() | (df["Tempo"] <= 0), "Atividade"].tolist()
         raise ValueError(
-            "Todas as atividades precisam ter tempo numerico maior que zero. "
+            "Todas as atividades precisam ter tempo numérico maior que zero. "
             f"Verifique: {', '.join(invalid)}."
         )
 
@@ -423,7 +441,7 @@ def build_problem(df: pd.DataFrame) -> Tuple[List[str], Dict[str, float], Dict[s
     missing_refs = []
     for _, row in df.iterrows():
         act = row["Atividade"]
-        preds = set(parse_precedence_cell(row["Precedencias"]))
+        preds = set(parse_precedence_cell(row["Precedências"]))
         for pred in preds:
             if pred not in activity_set:
                 missing_refs.append((act, pred))
@@ -431,7 +449,7 @@ def build_problem(df: pd.DataFrame) -> Tuple[List[str], Dict[str, float], Dict[s
 
     if missing_refs:
         details = "; ".join([f"{act} cita '{pred}'" for act, pred in missing_refs])
-        raise ValueError(f"Ha precedencias que nao existem na lista de atividades: {details}.")
+        raise ValueError(f"Há precedências que não existem na lista de atividades: {details}.")
 
     topological_order(activities, predecessors)
     return activities, times, predecessors
@@ -448,8 +466,8 @@ def topological_order(activities: List[str], predecessors: Dict[str, Set[str]]) 
         available = sorted(available, key=lambda a: order_index[a])
         if not available:
             raise ValueError(
-                "Foi detectado um ciclo nas precedencias. Revise a rede, pois uma atividade "
-                "nao pode depender direta ou indiretamente dela mesma."
+                "Foi detectado um ciclo nas precedências. Revise a rede, pois uma atividade "
+                "não pode depender direta ou indiretamente dela mesma."
             )
         for act in available:
             order.append(act)
@@ -563,9 +581,9 @@ def validate_cycle_time(times: Dict[str, float], cycle_time: float) -> None:
     largest_time = times[largest_task]
     if largest_time > cycle_time:
         raise ValueError(
-            "O tempo de ciclo e menor do que o tempo da maior atividade. "
-            f"Com 1 trabalhador por estacao, a atividade '{largest_task}' ({largest_time:g}) "
-            f"nao cabe em uma estacao com ciclo {cycle_time:g}."
+            "O tempo de ciclo é menor do que o tempo da maior atividade. "
+            f"Com 1 trabalhador por estação, a atividade '{largest_task}' ({largest_time:g}) "
+            f"não cabe em uma estação com ciclo {cycle_time:g}."
         )
 
 
@@ -604,7 +622,7 @@ def construct_solution_by_rule(
         if not station_tasks:
             blocked = sorted(unassigned)
             raise ValueError(
-                "Nao foi possivel alocar as atividades restantes. Verifique precedencias e tempo de ciclo. "
+                "Não foi possível alocar as atividades restantes. Verifique precedências e tempo de ciclo. "
                 f"Atividades bloqueadas: {', '.join(blocked)}."
             )
 
@@ -614,7 +632,7 @@ def construct_solution_by_rule(
                 "Atividades": station_tasks,
                 "Tempo ocupado": station_time,
                 "Tempo ocioso": cycle_time - station_time,
-                "Utilizacao (%)": 100 * station_time / cycle_time,
+                "Utilização (%)": 100 * station_time / cycle_time,
             }
         )
 
@@ -654,7 +672,7 @@ def construct_solution_comsoal(
         if not station_tasks:
             blocked = sorted(unassigned)
             raise ValueError(
-                "Nao foi possivel alocar as atividades restantes pelo COMSOAL. "
+                "Não foi possível alocar as atividades restantes pelo COMSOAL. "
                 f"Atividades bloqueadas: {', '.join(blocked)}."
             )
 
@@ -664,7 +682,7 @@ def construct_solution_comsoal(
                 "Atividades": station_tasks,
                 "Tempo ocupado": station_time,
                 "Tempo ocioso": cycle_time - station_time,
-                "Utilizacao (%)": 100 * station_time / cycle_time,
+                "Utilização (%)": 100 * station_time / cycle_time,
             }
         )
 
@@ -706,16 +724,16 @@ def finalize_result(
 
     if heuristic_code == "LCR":
         priority = {act: times[act] for act in activities}
-        priority_label = "Tempo de operacao"
+        priority_label = "Tempo de operação"
     elif heuristic_code == "RPW":
         priority = graph_info["positional_weight"]
         priority_label = "Peso posicional"
     elif heuristic_code == "KW":
         priority = graph_info["levels"]
-        priority_label = "Coluna de precedencia"
+        priority_label = "Coluna de precedência"
     elif heuristic_code == "JWAGON":
         priority = graph_info["successor_count"]
-        priority_label = "Numero de sucessores"
+        priority_label = "Número de sucessores"
     else:
         priority = {act: 0 for act in activities}
         priority_label = "Sorteio COMSOAL"
@@ -733,12 +751,12 @@ def finalize_result(
         "metrics": {
             "Tempo total das atividades": total_time,
             "Tempo de ciclo": cycle_time,
-            "Numero de estacoes": number_stations,
-            "Minimo teorico de estacoes": theoretical_min,
+            "Número de estações": number_stations,
+            "Mínimo teórico de estações": theoretical_min,
             "Tempo ocioso total": idle_time,
-            "Eficiencia da linha (%)": 100 * efficiency,
+            "Eficiência da linha (%)": 100 * efficiency,
             "Atraso de balanceamento (%)": 100 * balance_delay,
-            "Indice de suavidade": smoothness_index,
+            "Índice de suavidade": smoothness_index,
         },
     }
 
@@ -802,7 +820,7 @@ def balance_line(
 # Visualizacoes e exportacao
 # ============================================================
 
-def make_station_precedence_chart(
+def make_interactive_precedence_html(
     activities: List[str],
     times: Dict[str, float],
     predecessors: Dict[str, Set[str]],
@@ -810,15 +828,13 @@ def make_station_precedence_chart(
     stations: List[Dict],
     show_internal_edges: bool = True,
     selected_stations: List[int] = None,
-    show_labels: bool = None,
-    manual_y_offsets: Dict[str, float] = None,
-):
-    """Cria um diagrama em colunas por estacao, semelhante ao Flexible Line Balancing.
+    show_labels: bool = True,
+) -> Tuple[str, int]:
+    """Cria um diagrama interativo com nós arrastáveis.
 
-    A organizacao coloca cada estacao em uma coluna e distribui as atividades dessa
-    estacao em faixas verticais. O tamanho dos nos e recalculado automaticamente
-    conforme a quantidade de atividades visiveis. O usuario tambem pode aplicar
-    ajustes verticais individuais nos nos para melhorar a leitura do desenho.
+    O desenho usa colunas por estação. O usuário pode clicar em uma atividade e
+    arrastar para cima ou para baixo. As setas acompanham o movimento no próprio
+    navegador.
     """
     if selected_stations is None or len(selected_stations) == 0:
         selected_stations = [st["Estacao"] for st in stations]
@@ -830,227 +846,228 @@ def make_station_precedence_chart(
     topo_order = topological_order(activities, predecessors)
     visible_activities = [a for a in topo_order if assignment.get(a) in selected_station_set]
 
-    if manual_y_offsets is None:
-        manual_y_offsets = {}
-
     if not visible_activities or not visible_stations:
-        fig = go.Figure()
-        fig.update_layout(
-            title="Diagrama de precedencias por estacao",
-            height=500,
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-        )
-        return fig
+        empty_html = """
+        <div style='font-family: Arial, sans-serif; padding: 20px; color: #475569;'>
+            Selecione ao menos uma estação para exibir o diagrama.
+        </div>
+        """
+        return empty_html, 180
 
     n_visible = len(visible_activities)
-    total_activities = len(activities)
-    station_x = {st["Estacao"]: idx + 1 for idx, st in enumerate(visible_stations)}
     station_tasks = {
         st["Estacao"]: [a for a in visible_activities if assignment.get(a) == st["Estacao"]]
         for st in visible_stations
     }
     max_tasks_station = max(max(len(tasks), 1) for tasks in station_tasks.values())
 
-    if show_labels is None:
-        show_labels = n_visible <= 80
-
-    if max_tasks_station <= 8:
-        chart_height = max(650, max_tasks_station * 95 + 180)
-    elif max_tasks_station <= 25:
-        chart_height = max(800, max_tasks_station * 58 + 180)
-    elif max_tasks_station <= 80:
-        chart_height = max(950, max_tasks_station * 34 + 180)
-    elif max_tasks_station <= 200:
-        chart_height = max(1250, max_tasks_station * 16 + 180)
-    else:
-        chart_height = 2600
-    chart_height = min(chart_height, 2600)
-
-    pixels_per_lane = max(4.5, (chart_height - 190) / max(max_tasks_station + 1, 2))
-    node_size = int(max(5, min(58, pixels_per_lane * 0.58)))
-
-    if n_visible <= 80 and node_size >= 32:
+    if n_visible <= 40:
+        node_size = 30
+        font_size = 14
+        y_gap = 78
+        height = max(620, max_tasks_station * y_gap + 190)
+    elif n_visible <= 100:
+        node_size = 23
         font_size = 11
-    elif n_visible <= 180 and node_size >= 20:
+        y_gap = 54
+        height = max(720, max_tasks_station * y_gap + 190)
+    elif n_visible <= 250:
+        node_size = 16
         font_size = 9
+        y_gap = 34
+        height = max(850, min(1300, max_tasks_station * y_gap + 190))
     else:
+        node_size = 10
         font_size = 7
+        y_gap = 22
+        height = max(950, min(1550, max_tasks_station * y_gap + 190))
 
-    x_position = {}
-    y_position = {}
+    if not show_labels:
+        font_size = max(1, font_size - 2)
 
-    for station_number, tasks in station_tasks.items():
-        k = len(tasks)
-        if k == 0:
-            continue
-        top_lane = max_tasks_station - ((max_tasks_station - k) / 2)
-        for local_idx, act in enumerate(tasks):
-            base_y = top_lane - local_idx
-            base_y += float(manual_y_offsets.get(act, 0.0) or 0.0)
-            x_position[act] = station_x[station_number]
-            y_position[act] = base_y
+    station_gap = 270 if n_visible <= 120 else 230
+    station_width = int(station_gap * 0.72)
+    station_x = {st["Estacao"]: idx * station_gap for idx, st in enumerate(visible_stations)}
 
-    y_values_all = list(y_position.values())
-    base_y_min = 0.2
-    base_y_max = max_tasks_station + 0.8
-    y_min = min(base_y_min, min(y_values_all) - 0.8)
-    y_max = max(base_y_max, max(y_values_all) + 0.8)
-
-    fig = go.Figure()
+    nodes = []
+    original_x = {}
+    station_defs = []
 
     for st in visible_stations:
         station_number = st["Estacao"]
-        xpos = station_x[station_number]
         color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
-        fig.add_vrect(
-            x0=xpos - 0.42,
-            x1=xpos + 0.42,
-            y0=y_min,
-            y1=y_max,
-            fillcolor=color,
-            opacity=0.08,
-            line_width=0,
-            layer="below",
-        )
-
-    line_edge_x = []
-    line_edge_y = []
-    edge_count = 0
-    edge_limit_for_arrows = 180 if n_visible <= 100 else 90
-
-    for act in visible_activities:
-        for pred in sorted(predecessors[act]):
-            if pred not in x_position:
-                continue
-            if not show_internal_edges and assignment.get(pred) == assignment.get(act):
-                continue
-
-            x1 = x_position[pred]
-            y1 = y_position[pred]
-            x2 = x_position[act]
-            y2 = y_position[act]
-            edge_count += 1
-
-            if edge_count <= edge_limit_for_arrows and n_visible <= 160:
-                fig.add_annotation(
-                    x=x2,
-                    y=y2,
-                    ax=x1,
-                    ay=y1,
-                    xref="x",
-                    yref="y",
-                    axref="x",
-                    ayref="y",
-                    text="",
-                    showarrow=True,
-                    arrowhead=3,
-                    arrowsize=1,
-                    arrowwidth=1.1,
-                    arrowcolor="#475569",
-                    standoff=max(4, node_size / 2 - 2),
-                    startstandoff=max(4, node_size / 2 - 2),
-                )
-            else:
-                line_edge_x.extend([x1, x2, None])
-                line_edge_y.extend([y1, y2, None])
-
-    if line_edge_x:
-        fig.add_trace(
-            go.Scatter(
-                x=line_edge_x,
-                y=line_edge_y,
-                mode="lines",
-                line=dict(color="#64748b", width=0.9),
-                hoverinfo="skip",
-                showlegend=False,
-            )
+        station_defs.append(
+            {
+                "number": station_number,
+                "label": f"Estação {station_number}",
+                "x": station_x[station_number],
+                "color": color,
+            }
         )
 
     for st in visible_stations:
         station_number = st["Estacao"]
         tasks = station_tasks[station_number]
         color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
-        x_values = [x_position[t] for t in tasks]
-        y_values = [y_position[t] for t in tasks]
-
-        if show_labels:
-            if node_size >= 28:
-                text_values = [f"{t}<br>{times[t]:g}" for t in tasks]
-            else:
-                text_values = [f"{t}" for t in tasks]
-            mode = "markers+text"
-        else:
-            text_values = ["" for _ in tasks]
-            mode = "markers"
-
-        hover_values = [
-            f"Atividade: {t}<br>Tempo: {times[t]:g}<br>Estacao: {station_number}<br>Precedencias: {', '.join(sorted(predecessors[t])) if predecessors[t] else 'nenhuma'}"
-            for t in tasks
-        ]
-
-        fig.add_trace(
-            go.Scatter(
-                x=x_values,
-                y=y_values,
-                mode=mode,
-                text=text_values,
-                textposition="middle center",
-                hovertext=hover_values,
-                hoverinfo="text",
-                marker=dict(
-                    size=node_size,
-                    color=color,
-                    line=dict(color="#111827", width=1.1),
-                ),
-                textfont=dict(color="white", size=font_size),
-                name=f"Estacao {station_number}",
+        k = len(tasks)
+        for local_idx, act in enumerate(tasks):
+            y = (local_idx - (k - 1) / 2) * y_gap
+            x = station_x[station_number]
+            original_x[act] = x
+            preds_text = ", ".join(sorted(predecessors[act])) if predecessors[act] else "nenhuma"
+            label = act if show_labels else ""
+            node_title = (
+                f"Atividade: {html.escape(str(act))}<br>"
+                f"Tempo: {times[act]:g}<br>"
+                f"Estação: {station_number}<br>"
+                f"Precedências: {html.escape(preds_text)}"
             )
-        )
+            nodes.append(
+                {
+                    "id": act,
+                    "label": label,
+                    "title": node_title,
+                    "x": x,
+                    "y": y,
+                    "size": node_size,
+                    "color": {
+                        "background": color,
+                        "border": "#111827",
+                        "highlight": {"background": color, "border": "#020617"},
+                    },
+                    "font": {"size": font_size, "color": "#ffffff", "face": "Arial"},
+                    "borderWidth": 2,
+                    "shape": "circle",
+                    "mass": 1,
+                }
+            )
 
-    title_extra = ""
-    if total_activities >= 120:
-        title_extra = " | visualizacao compacta para instancia grande"
+    edges = []
+    for act in visible_activities:
+        for pred in sorted(predecessors[act]):
+            if pred not in original_x:
+                continue
+            if not show_internal_edges and assignment.get(pred) == assignment.get(act):
+                continue
+            edges.append(
+                {
+                    "from": pred,
+                    "to": act,
+                    "arrows": "to",
+                    "color": {"color": "#475569", "highlight": "#0f172a"},
+                    "width": 1.2,
+                }
+            )
 
-    fig.update_layout(
-        title=f"Diagrama de precedencias por estacao{title_extra}",
-        height=chart_height,
-        margin=dict(l=40, r=30, t=80, b=70),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        hovermode="closest",
-        dragmode="pan",
-        uirevision="precedence_diagram",
-    )
-    fig.update_xaxes(
-        title="Estacao",
-        range=[0.35, len(visible_stations) + 0.65],
-        tickmode="array",
-        tickvals=[station_x[st["Estacao"]] for st in visible_stations],
-        ticktext=[f"Estacao {st['Estacao']}" for st in visible_stations],
-        showgrid=False,
-        zeroline=False,
-    )
-    fig.update_yaxes(
-        title="Atividades dentro das estacoes",
-        range=[y_min, y_max],
-        showticklabels=False,
-        showgrid=False,
-        zeroline=False,
-    )
+    container_height = int(height)
+    nodes_json = json.dumps(nodes, ensure_ascii=False)
+    edges_json = json.dumps(edges, ensure_ascii=False)
+    station_defs_json = json.dumps(station_defs, ensure_ascii=False)
+    original_x_json = json.dumps(original_x, ensure_ascii=False)
 
-    if total_activities >= 120:
-        fig.add_annotation(
-            x=1,
-            y=y_max - 0.2,
-            text="Use zoom, hover, filtro de estacoes e ajuste vertical para analisar redes grandes.",
-            showarrow=False,
-            xanchor="left",
-            font=dict(size=11, color="#475569"),
-        )
+    html_doc = f"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+    body {{ margin: 0; font-family: Arial, sans-serif; background: #ffffff; }}
+    #diagram-wrapper {{ width: 100%; }}
+    #diagram-help {{
+        font-size: 13px;
+        color: #475569;
+        padding: 6px 4px 10px 4px;
+    }}
+    #network {{
+        height: {container_height}px;
+        width: 100%;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        background: #ffffff;
+    }}
+</style>
+</head>
+<body>
+<div id="diagram-wrapper">
+    <div id="diagram-help">Clique em uma atividade e arraste para cima ou para baixo. Use a roda do mouse para aproximar ou afastar.</div>
+    <div id="network"></div>
+</div>
+<script>
+const nodes = new vis.DataSet({nodes_json});
+const edges = new vis.DataSet({edges_json});
+const stationDefs = {station_defs_json};
+const originalX = {original_x_json};
+const stationWidth = {station_width};
+const container = document.getElementById('network');
+const data = {{ nodes: nodes, edges: edges }};
+const options = {{
+    autoResize: true,
+    layout: {{ improvedLayout: false }},
+    physics: {{ enabled: false }},
+    interaction: {{
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+        tooltipDelay: 80,
+        multiselect: true,
+        navigationButtons: true,
+        keyboard: true
+    }},
+    nodes: {{
+        shape: 'circle',
+        chosen: true
+    }},
+    edges: {{
+        arrows: {{ to: {{ enabled: true, scaleFactor: 0.75 }} }},
+        smooth: {{ enabled: true, type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.35 }},
+        selectionWidth: 2,
+        hoverWidth: 2
+    }}
+}};
+const network = new vis.Network(container, data, options);
 
-    return fig
+network.on('beforeDrawing', function(ctx) {{
+    const topLeft = network.DOMtoCanvas({{x: 0, y: 0}});
+    const bottomRight = network.DOMtoCanvas({{x: container.clientWidth, y: container.clientHeight}});
+    ctx.save();
+    stationDefs.forEach(function(st) {{
+        ctx.globalAlpha = 0.08;
+        ctx.fillStyle = st.color;
+        ctx.fillRect(st.x - stationWidth / 2, topLeft.y, stationWidth, bottomRight.y - topLeft.y);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#475569';
+        ctx.textAlign = 'center';
+        ctx.font = '16px Arial';
+        ctx.fillText(st.label, st.x, bottomRight.y - 22);
+    }});
+    ctx.restore();
+}});
+
+network.on('dragging', function(params) {{
+    if (!params.nodes || params.nodes.length === 0) {{ return; }}
+    params.nodes.forEach(function(id) {{
+        const current = nodes.get(id);
+        nodes.update({{id: id, x: originalX[id], y: current.y}});
+    }});
+}});
+
+network.on('dragEnd', function(params) {{
+    if (!params.nodes || params.nodes.length === 0) {{ return; }}
+    params.nodes.forEach(function(id) {{
+        const current = nodes.get(id);
+        nodes.update({{id: id, x: originalX[id], y: current.y}});
+    }});
+}});
+
+setTimeout(function() {{ network.fit({{animation: false}}); }}, 250);
+</script>
+</body>
+</html>
+"""
+    return html_doc, container_height + 56
+
 
 def make_gantt_df(stations: List[Dict], times: Dict[str, float]) -> pd.DataFrame:
     rows = []
@@ -1061,7 +1078,7 @@ def make_gantt_df(stations: List[Dict], times: Dict[str, float]) -> pd.DataFrame
             finish = current + times[task]
             rows.append(
                 {
-                    "Estacao": f"E{st['Estacao']}",
+                    "Estação": f"E{st['Estacao']}",
                     "Atividade": task,
                     "Inicio no ciclo": start,
                     "Fim no ciclo": finish,
@@ -1079,7 +1096,7 @@ def create_gantt_chart(gantt_df: pd.DataFrame, cycle_time: float):
     fig = go.Figure()
     for _, row in gantt_df.iterrows():
         fig.add_bar(
-            y=[row["Estacao"]],
+            y=[row["Estação"]],
             x=[row["Duracao"]],
             base=[row["Inicio no ciclo"]],
             orientation="h",
@@ -1087,21 +1104,21 @@ def create_gantt_chart(gantt_df: pd.DataFrame, cycle_time: float):
             textposition="inside",
             name=row["Atividade"],
             hovertemplate=(
-                "Estacao: %{y}<br>"
+                "Estação: %{y}<br>"
                 "Atividade: " + str(row["Atividade"]) + "<br>"
                 "Inicio: " + f"{row['Inicio no ciclo']:g}" + "<br>"
                 "Fim: " + f"{row['Fim no ciclo']:g}" + "<br>"
-                "Duracao: " + f"{row['Duracao']:g}" + "<extra></extra>"
+                "Duração: " + f"{row['Duracao']:g}" + "<extra></extra>"
             ),
         )
 
     fig.update_layout(
-        title="Distribuicao das atividades por estacao",
+        title="Distribuição das atividades por estação",
         barmode="stack",
         showlegend=False,
-        height=140 + 60 * gantt_df["Estacao"].nunique(),
+        height=140 + 60 * gantt_df["Estação"].nunique(),
         xaxis_title="Tempo dentro do ciclo",
-        yaxis_title="Estacao",
+        yaxis_title="Estação",
     )
     fig.update_xaxes(range=[0, cycle_time])
     fig.update_yaxes(autorange="reversed")
@@ -1121,30 +1138,30 @@ def build_output_tables(
             {
                 "Atividade": act,
                 "Tempo": times[act],
-                "Precedencias": ", ".join(sorted(predecessors[act])),
-                "Estacao": result["assignment"][act],
-                "Ordem na estacao": result["task_order"][act],
+                "Precedências": ", ".join(sorted(predecessors[act])),
+                "Estação": result["assignment"][act],
+                "Ordem na estação": result["task_order"][act],
                 result["priority_label"]: result["priority"][act],
                 "Sucessores imediatos": graph_info["immediate_successor_count"][act],
                 "Sucessores totais": graph_info["successor_count"][act],
                 "Peso posicional": graph_info["positional_weight"][act],
-                "Nivel de precedencia": graph_info["levels"][act],
+                "Nível de precedência": graph_info["levels"][act],
                 "Lista de sucessores": ", ".join(sorted(graph_info["all_successors"][act])),
             }
         )
 
     tasks_df = pd.DataFrame(task_rows).sort_values(
-        ["Estacao", "Ordem na estacao"]
+        ["Estação", "Ordem na estação"]
     ).reset_index(drop=True)
 
-    stations_df = pd.DataFrame(result["stations"])
+    stations_df = pd.DataFrame(result["stations"]).rename(columns={"Estacao": "Estação"})
     stations_df["Atividades"] = stations_df["Atividades"].apply(lambda x: ", ".join(x))
     stations_df["Tempo ocupado"] = stations_df["Tempo ocupado"].round(4)
     stations_df["Tempo ocioso"] = stations_df["Tempo ocioso"].round(4)
-    stations_df["Utilizacao (%)"] = stations_df["Utilizacao (%)"].round(2)
+    stations_df["Utilização (%)"] = stations_df["Utilização (%)"].round(2)
 
     metrics_df = pd.DataFrame(
-        [{"Metrica": k, "Valor": v} for k, v in result["metrics"].items()]
+        [{"Métrica": k, "Valor": v} for k, v in result["metrics"].items()]
     )
     metrics_df["Valor"] = metrics_df["Valor"].apply(
         lambda x: round(x, 4) if isinstance(x, float) else x
@@ -1163,19 +1180,19 @@ def to_excel_bytes(
 ) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        metrics_df.to_excel(writer, index=False, sheet_name="Metricas")
-        stations_df.to_excel(writer, index=False, sheet_name="Estacoes")
+        metrics_df.to_excel(writer, index=False, sheet_name="Métricas")
+        stations_df.to_excel(writer, index=False, sheet_name="Estações")
         tasks_df.to_excel(writer, index=False, sheet_name="Atividades")
-        gantt_df.to_excel(writer, index=False, sheet_name="Grafico_Estacoes")
+        gantt_df.to_excel(writer, index=False, sheet_name="Gráfico_Estações")
 
         info_rows = [
-            {"Campo": "Heuristica utilizada", "Valor": heuristic_label},
-            {"Campo": "Observacao", "Valor": "Resultado heuristico. Nao garante solucao otima global."},
-            {"Campo": "Restricao", "Valor": "Modelo com 1 trabalhador por estacao."},
+            {"Campo": "Heurística utilizada", "Valor": heuristic_label},
+            {"Campo": "Observação", "Valor": "Resultado heurístico. Não garante solução ótima global."},
+            {"Campo": "Restrição", "Valor": "Modelo com 1 trabalhador por estação."},
         ]
         if result["heuristic_code"] == "COMSOAL":
             info_rows.append({"Campo": "Tentativas COMSOAL", "Valor": result["comsoal_iterations"]})
-            info_rows.append({"Campo": "Semente aleatoria", "Valor": result["random_seed"]})
+            info_rows.append({"Campo": "Semente aleatória", "Valor": result["random_seed"]})
         pd.DataFrame(info_rows).to_excel(writer, index=False, sheet_name="Info")
 
         for sheet_name in writer.sheets:
@@ -1200,24 +1217,24 @@ def to_txt_report(
     result: Dict,
 ) -> str:
     lines = []
-    lines.append("RELATORIO DE BALANCEAMENTO DE LINHA")
-    lines.append(f"Heuristica utilizada: {heuristic_label}")
-    lines.append("Restricao: 1 trabalhador por estacao")
+    lines.append("RELATÓRIO DE BALANCEAMENTO DE LINHA")
+    lines.append(f"Heurística utilizada: {heuristic_label}")
+    lines.append("Restrição: 1 trabalhador por estação")
     if result["heuristic_code"] == "COMSOAL":
         lines.append(f"Tentativas COMSOAL: {result['comsoal_iterations']}")
-        lines.append(f"Semente aleatoria: {result['random_seed']}")
+        lines.append(f"Semente aleatória: {result['random_seed']}")
     lines.append("")
-    lines.append("METRICAS")
+    lines.append("MÉTRICAS")
     for _, row in metrics_df.iterrows():
-        lines.append(f"- {row['Metrica']}: {row['Valor']}")
+        lines.append(f"- {row['Métrica']}: {row['Valor']}")
     lines.append("")
-    lines.append("ESTACOES")
+    lines.append("ESTAÇÕES")
     for _, row in stations_df.iterrows():
         lines.append(
-            f"E{row['Estacao']}: {row['Atividades']} | "
+            f"E{row['Estação']}: {row['Atividades']} | "
             f"tempo ocupado={row['Tempo ocupado']} | "
             f"tempo ocioso={row['Tempo ocioso']} | "
-            f"utilizacao={row['Utilizacao (%)']}%"
+            f"utilização={row['Utilização (%)']}%"
         )
     lines.append("")
     lines.append("ATIVIDADES")
@@ -1243,14 +1260,23 @@ with st.sidebar:
         min_value=0.01,
         value=40.0,
         step=1.0,
-        help="Tempo maximo disponivel em cada estacao.",
+        help="Tempo máximo disponível em cada estação.",
     )
 
     heuristic_label = st.selectbox(
-        "Heuristica",
+        "Heurística",
         list(HEURISTIC_OPTIONS.keys()),
-        help="A heuristica define a regra de prioridade para escolher atividades elegiveis.",
+        help="A heurística define a regra de prioridade para escolher atividades elegíveis.",
+        key="heuristic_choice",
     )
+
+    if "previous_heuristic_choice" not in st.session_state:
+        st.session_state["previous_heuristic_choice"] = heuristic_label
+    elif st.session_state["previous_heuristic_choice"] != heuristic_label:
+        st.session_state["previous_heuristic_choice"] = heuristic_label
+        reset_outputs_and_go_home()
+        st.rerun()
+
     heuristic_code = HEURISTIC_OPTIONS[heuristic_label]
 
     comsoal_iterations = 200
@@ -1262,10 +1288,10 @@ with st.sidebar:
             max_value=10000,
             value=500,
             step=50,
-            help="Quantidade de solucoes aleatorias testadas.",
+            help="Quantidade de soluções aleatórias testadas.",
         )
         random_seed = st.number_input(
-            "Semente aleatoria",
+            "Semente aleatória",
             min_value=0,
             max_value=999999,
             value=42,
@@ -1289,12 +1315,12 @@ with st.expander("Como preencher os dados", expanded=True):
 
         - **Atividade**: código ou nome da atividade. Exemplo: `A`, `B`, `Corte`, `Montagem`.
         - **Tempo**: duração da atividade. Use número maior que zero.
-        - **Precedencias**: atividades que precisam vir antes. Separe por vírgula. Se não houver predecessoras, deixe em branco.
+        - **Precedências**: atividades que precisam vir antes. Separe por vírgula. Se não houver predecessoras, deixe em branco.
 
         Exemplo:
 
         ```text
-        Atividade;Tempo;Precedencias
+        Atividade;Tempo;Precedências
         A;20;
         B;6;A
         C;5;B
@@ -1307,6 +1333,7 @@ input_mode = st.radio(
     "Forma de entrada",
     ["Digitar ou editar tabela", "Importar TXT", "Importar Excel"],
     horizontal=True,
+    key="input_mode",
 )
 
 df_input = None
@@ -1324,6 +1351,8 @@ if input_mode == "Digitar ou editar tabela":
             st.session_state["manual_editor_version"] += 1
             st.rerun()
 
+    st.session_state["manual_df"] = standardize_input_df(st.session_state["manual_df"])
+
     df_input = st.data_editor(
         st.session_state["manual_df"],
         num_rows="dynamic",
@@ -1332,7 +1361,7 @@ if input_mode == "Digitar ou editar tabela":
         column_config={
             "Atividade": st.column_config.TextColumn("Atividade", required=False),
             "Tempo": st.column_config.NumberColumn("Tempo", min_value=0.01, step=1.0, required=False),
-            "Precedencias": st.column_config.TextColumn("Precedencias"),
+            "Precedências": st.column_config.TextColumn("Precedências"),
         },
     )
     st.session_state["manual_df"] = df_input.copy()
@@ -1412,7 +1441,10 @@ if run:
                 "gantt_df": gantt_df,
                 "heuristic_label": heuristic_label,
             }
-            st.success("Balanceamento concluido.")
+            for key in ["station_filter_diagram", "show_internal_edges_diagram", "show_labels_diagram"]:
+                st.session_state.pop(key, None)
+            st.session_state["result_page"] = "Estações"
+            st.success("Balanceamento concluído.")
         except Exception as exc:
             st.session_state.pop("last_solution", None)
             st.error(str(exc))
@@ -1432,155 +1464,60 @@ if "last_solution" in st.session_state:
     st.subheader("Resumo")
     m = result["metrics"]
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Estacoes", int(m["Numero de estacoes"]))
-    col2.metric("Minimo teorico", int(m["Minimo teorico de estacoes"]))
-    col3.metric("Eficiencia", f"{m['Eficiencia da linha (%)']:.2f}%")
+    col1.metric("Estações", int(m["Número de estações"]))
+    col2.metric("Mínimo teórico", int(m["Mínimo teórico de estações"]))
+    col3.metric("Eficiência", f"{m['Eficiência da linha (%)']:.2f}%")
     col4.metric("Tempo ocioso total", f"{m['Tempo ocioso total']:.2f}")
 
     st.info(
-        f"Heuristica utilizada: **{heuristic_label}**. "
-        "Resultado heuristico, sem garantia de otimo global. Modelo com 1 trabalhador por estacao."
+        f"Heurística utilizada: **{heuristic_label}**. "
+        "Resultado heurístico, sem garantia de ótimo global. Modelo com 1 trabalhador por estação."
     )
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Estacoes", "Atividades", "Diagrama de precedencias", "Grafico"]
+    result_pages = ["Estações", "Atividades", "Diagrama de precedências", "Gráfico"]
+    if "result_page" not in st.session_state or st.session_state["result_page"] not in result_pages:
+        st.session_state["result_page"] = "Estações"
+
+    result_page = st.radio(
+        "Página dos resultados",
+        result_pages,
+        horizontal=True,
+        key="result_page",
     )
 
-    with tab1:
+    if result_page == "Estações":
         st.dataframe(stations_df, use_container_width=True)
         st.dataframe(metrics_df, use_container_width=True)
 
-    with tab2:
+    elif result_page == "Atividades":
         st.dataframe(tasks_df, use_container_width=True)
 
-    with tab3:
+    elif result_page == "Diagrama de precedências":
         station_numbers = [st["Estacao"] for st in result["stations"]]
         selected_stations = st.multiselect(
-            "Estacoes exibidas no diagrama",
+            "Estações exibidas no diagrama",
             options=station_numbers,
             default=station_numbers,
-            help="Em problemas grandes, selecione apenas algumas estacoes para melhorar a leitura.",
+            help="Em problemas grandes, selecione apenas algumas estações para melhorar a leitura.",
+            key="station_filter_diagram",
         )
         cdiag1, cdiag2 = st.columns(2)
         with cdiag1:
             show_internal_edges = st.checkbox(
-                "Mostrar precedencias internas da mesma estacao",
+                "Mostrar precedências internas da mesma estação",
                 value=True,
-                help="Marcado, o diagrama mostra tambem as relacoes entre atividades alocadas na mesma estacao.",
+                help="Marcado, o diagrama mostra também as relações entre atividades alocadas na mesma estação.",
+                key="show_internal_edges_diagram",
             )
         with cdiag2:
             show_labels = st.checkbox(
-                "Mostrar rotulos nos nos",
+                "Mostrar rótulos nos nós",
                 value=len(activities) <= 80,
-                help="Para exemplos muito grandes, deixe desmarcado e use o mouse sobre os nos.",
+                help="Para exemplos muito grandes, deixe desmarcado e use o mouse sobre os nós.",
+                key="show_labels_diagram",
             )
 
-        if "node_offsets" not in st.session_state:
-            st.session_state["node_offsets"] = {}
-        for act in activities:
-            st.session_state["node_offsets"].setdefault(act, 0.0)
-        st.session_state["node_offsets"] = {
-            act: float(st.session_state["node_offsets"].get(act, 0.0))
-            for act in activities
-        }
-
-        manual_y_offsets = dict(st.session_state["node_offsets"])
-        with st.expander("Ajustar posicao vertical dos nos", expanded=False):
-            st.caption(
-                "Escolha uma atividade e mova apenas esse no. "
-                "As setas acompanham automaticamente a nova posicao."
-            )
-            visible_for_offset = [
-                act for act in activities
-                if result["assignment"].get(act) in set(selected_stations)
-            ]
-
-            if visible_for_offset:
-                visible_for_offset = sorted(
-                    visible_for_offset,
-                    key=lambda act: (result["assignment"].get(act, 9999), activities.index(act)),
-                )
-                step_col, select_col = st.columns([1, 3])
-                with step_col:
-                    offset_step = st.number_input(
-                        "Passo",
-                        min_value=0.10,
-                        max_value=5.00,
-                        value=0.50,
-                        step=0.10,
-                        format="%.2f",
-                        help="Tamanho do deslocamento vertical aplicado ao no selecionado.",
-                    )
-                with select_col:
-                    node_to_move = st.selectbox(
-                        "Atividade para reposicionar",
-                        options=visible_for_offset,
-                        format_func=lambda act: f"{act} | Estacao {result['assignment'].get(act)} | ajuste atual {st.session_state['node_offsets'].get(act, 0.0):.2f}",
-                    )
-
-                move_col1, move_col2, move_col3, move_col4 = st.columns(4)
-                with move_col1:
-                    if st.button("Subir selecionada", type="primary", use_container_width=True):
-                        st.session_state["node_offsets"][node_to_move] = float(st.session_state["node_offsets"].get(node_to_move, 0.0)) + float(offset_step)
-                        st.rerun()
-                with move_col2:
-                    if st.button("Descer selecionada", type="primary", use_container_width=True):
-                        st.session_state["node_offsets"][node_to_move] = float(st.session_state["node_offsets"].get(node_to_move, 0.0)) - float(offset_step)
-                        st.rerun()
-                with move_col3:
-                    if st.button("Zerar selecionada", type="secondary", use_container_width=True):
-                        st.session_state["node_offsets"][node_to_move] = 0.0
-                        st.rerun()
-                with move_col4:
-                    if st.button("Zerar todos", type="secondary", use_container_width=True):
-                        for act in activities:
-                            st.session_state["node_offsets"][act] = 0.0
-                        st.rerun()
-
-                st.caption(
-                    f"Ajuste atual de {node_to_move}: "
-                    f"{float(st.session_state['node_offsets'].get(node_to_move, 0.0)):.2f}"
-                )
-
-                with st.expander("Ajuste numerico opcional", expanded=False):
-                    st.caption(
-                        "Edite apenas a linha da atividade que deseja alterar. "
-                        "Cada linha controla um unico no."
-                    )
-                    offset_df = pd.DataFrame(
-                        [
-                            {
-                                "Atividade": act,
-                                "Estacao": result["assignment"][act],
-                                "Ajuste vertical": float(st.session_state["node_offsets"].get(act, 0.0)),
-                            }
-                            for act in visible_for_offset
-                        ]
-                    )
-                    edited_offsets = st.data_editor(
-                        offset_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        disabled=["Atividade", "Estacao"],
-                        column_config={
-                            "Ajuste vertical": st.column_config.NumberColumn(
-                                "Ajuste vertical",
-                                min_value=-20.0,
-                                max_value=20.0,
-                                step=0.25,
-                                format="%.2f",
-                            )
-                        },
-                        key="offset_editor",
-                    )
-                    for _, row in edited_offsets.iterrows():
-                        st.session_state["node_offsets"][row["Atividade"]] = float(row["Ajuste vertical"] or 0.0)
-
-                manual_y_offsets = dict(st.session_state["node_offsets"])
-            else:
-                st.info("Selecione ao menos uma estacao para ajustar os nos.")
-
-        fig_prec = make_station_precedence_chart(
+        diagram_html, diagram_height = make_interactive_precedence_html(
             activities,
             times,
             predecessors,
@@ -1589,20 +1526,21 @@ if "last_solution" in st.session_state:
             show_internal_edges=show_internal_edges,
             selected_stations=selected_stations,
             show_labels=show_labels,
-            manual_y_offsets=manual_y_offsets,
         )
-        st.plotly_chart(fig_prec, use_container_width=True)
+        components.html(diagram_html, height=diagram_height, scrolling=True)
+
         if not show_internal_edges:
             st.caption(
-                "As precedencias internas da mesma estacao foram ocultadas apenas no desenho. "
-                "Elas continuam sendo respeitadas no calculo."
+                "As precedências internas da mesma estação foram ocultadas apenas no desenho. "
+                "Elas continuam sendo respeitadas no cálculo."
             )
         if len(activities) >= 120:
             st.caption(
-                "Para redes grandes, o diagrama fica em modo compacto. Use zoom, hover, filtro de estacoes e ajuste vertical para analisar partes da rede."
+                "Para redes grandes, use zoom, hover e filtro de estações para analisar partes da rede. "
+                "Os nós podem ser arrastados para melhorar a leitura."
             )
 
-    with tab4:
+    elif result_page == "Gráfico":
         fig = create_gantt_chart(gantt_df, m["Tempo de ciclo"])
         if fig is not None:
             st.plotly_chart(fig, use_container_width=True)
@@ -1627,7 +1565,7 @@ if "last_solution" in st.session_state:
         use_container_width=True,
     )
     dl2.download_button(
-        "Baixar relatorio em TXT",
+        "Baixar relatório em TXT",
         data=txt_report.encode("utf-8"),
         file_name="relatorio_balanceamento_linha.txt",
         mime="text/plain",
