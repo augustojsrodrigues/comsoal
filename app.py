@@ -996,7 +996,7 @@ def make_interactive_precedence_html(
 </head>
 <body>
 <div id="diagram-wrapper">
-    <div id="diagram-help">Clique em uma atividade e arraste para cima ou para baixo. A posição fica salva no navegador. Use a roda do mouse para aproximar ou afastar.</div>
+    <div id="diagram-help">Clique em uma atividade e arraste para cima ou para baixo. A posição fica salva no navegador. Use os botões do diagrama para aproximar ou afastar. A roda do mouse foi bloqueada para evitar zoom acidental.</div>
     <div id="network"></div>
 </div>
 <script>
@@ -1007,6 +1007,16 @@ const stationDefs = {station_defs_json};
 const originalX = {original_x_json};
 const stationWidth = {station_width};
 const container = document.getElementById('network');
+
+function bloquearZoomPelaRoda(event) {{
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return false;
+}}
+
+container.addEventListener('wheel', bloquearZoomPelaRoda, {{ passive: false, capture: true }});
+container.addEventListener('mousewheel', bloquearZoomPelaRoda, {{ passive: false, capture: true }});
+container.addEventListener('DOMMouseScroll', bloquearZoomPelaRoda, {{ passive: false, capture: true }});
 
 function readSavedPositions() {{
     try {{
@@ -1176,33 +1186,52 @@ def create_gantt_chart(gantt_df: pd.DataFrame, cycle_time: float):
     return fig
 
 
-def create_balance_chart(stations_df: pd.DataFrame, cycle_time: float, efficiency: float):
+def create_balance_chart(stations_df: pd.DataFrame, cycle_time: float, efficiency: float, times: Dict[str, float]):
     if stations_df.empty:
         return None
 
     df = stations_df.copy()
     fig = go.Figure()
+
+    max_station_time = 0.0
     for _, row in df.iterrows():
-        station_label = f"E{int(row['Estação'])}"
+        station_number = int(row["Estação"])
+        station_label = f"E{station_number}"
         activities = [a.strip() for a in str(row["Atividades"]).split(",") if a.strip()]
         station_time = float(row["Tempo ocupado"])
-        if activities:
-            equal_height = station_time / len(activities) if len(activities) else station_time
-            for task in activities:
-                fig.add_bar(
-                    x=[station_label],
-                    y=[equal_height],
-                    text=[task],
-                    textposition="inside",
-                    name=task,
-                    hovertemplate=(
-                        "Estação: " + station_label + "<br>"
-                        "Atividade: " + task + "<br>"
-                        "Tempo total da estação: " + f"{station_time:g}" + "<extra></extra>"
-                    ),
-                )
-        else:
-            fig.add_bar(x=[station_label], y=[0], text=[""], showlegend=False)
+        max_station_time = max(max_station_time, station_time)
+        station_color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
+
+        if not activities:
+            fig.add_bar(
+                x=[station_label],
+                y=[0],
+                marker=dict(color=station_color, line=dict(color="#111827", width=1)),
+                showlegend=False,
+                hovertemplate="Estação: " + station_label + "<br>Tempo ocupado: 0<extra></extra>",
+            )
+            continue
+
+        for task in activities:
+            task_time = float(times.get(task, 0.0))
+            if task_time <= 0:
+                task_time = station_time / len(activities)
+            fig.add_bar(
+                x=[station_label],
+                y=[task_time],
+                text=[task],
+                textposition="inside",
+                insidetextanchor="middle",
+                marker=dict(color=station_color, line=dict(color="#111827", width=1)),
+                name=station_label,
+                showlegend=False,
+                hovertemplate=(
+                    "Estação: " + station_label + "<br>"
+                    "Atividade: " + task + "<br>"
+                    "Tempo da atividade: " + f"{task_time:g}" + "<br>"
+                    "Tempo total da estação: " + f"{station_time:g}" + "<extra></extra>"
+                ),
+            )
 
     fig.add_hline(
         y=cycle_time,
@@ -1217,15 +1246,19 @@ def create_balance_chart(stations_df: pd.DataFrame, cycle_time: float, efficienc
         title=f"Resultado do balanceamento da linha | Eficiência: {efficiency:.2f}%",
         barmode="stack",
         showlegend=False,
-        height=520,
+        height=540,
         xaxis_title="Estação de trabalho",
         yaxis_title="Tempo acumulado na estação",
         margin=dict(l=40, r=30, t=80, b=45),
+        bargap=0.22,
     )
+    fig.update_traces(textfont=dict(color="white", size=13))
     fig.update_xaxes(gridcolor="#f1f5f9")
-    fig.update_yaxes(range=[0, max(cycle_time * 1.12, df["Tempo ocupado"].max() * 1.12)], gridcolor="#e5e7eb")
+    fig.update_yaxes(
+        range=[0, max(cycle_time * 1.12, max_station_time * 1.12)],
+        gridcolor="#e5e7eb",
+    )
     return fig
-
 
 def build_output_tables(
     df_input: pd.DataFrame,
@@ -1661,13 +1694,11 @@ if "last_solution" in st.session_state:
             stations_df,
             m.get("Tempo de ciclo", cycle_time),
             m.get("Eficiência da linha (%)", 0.0),
+            times,
         )
         if balance_fig is not None:
-            st.plotly_chart(balance_fig, use_container_width=True)
+            st.plotly_chart(balance_fig, use_container_width=True, config={"scrollZoom": False})
 
-        fig = create_gantt_chart(gantt_df, m.get("Tempo de ciclo", cycle_time))
-        if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Baixar resultados")
     excel_bytes = to_excel_bytes(
