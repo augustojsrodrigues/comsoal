@@ -295,8 +295,10 @@ def make_manual_pdf_bytes() -> bytes:
         ("p", "Tambem gera a tabela de estacoes, a tabela de atividades, o diagrama de precedencias por estacao e o grafico de ocupacao por estacao."),
         ("h1", "9. Diagrama de precedencias por estacao"),
         ("p", "O diagrama usa cores para identificar as estacoes e posiciona as atividades em colunas por estacao, em uma forma parecida com softwares de balanceamento de linha."),
-        ("p", "Para facilitar a leitura, a visualizacao principal mostra as ligacoes entre estacoes e omite ligacoes internas da mesma estacao."),
-        ("p", "Mesmo quando uma ligacao interna nao aparece no desenho, a precedencia continua sendo respeitada pelo calculo."),
+        ("p", "Por padrao, o diagrama mostra todas as relacoes de precedencia, inclusive as ligacoes internas da mesma estacao."),
+        ("p", "O usuario pode ocultar as ligacoes internas se desejar uma visualizacao mais limpa, sem alterar o calculo."),
+        ("p", "O tamanho dos nos e ajustado automaticamente de acordo com a quantidade de atividades visiveis."),
+        ("p", "Tambem e possivel ajustar a posicao vertical dos nos para melhorar a leitura do desenho."),
         ("p", "Em exemplos grandes, use o filtro de estacoes, zoom e o mouse sobre os nos para ler as atividades sem poluir o grafico."),
         ("h1", "10. Downloads"),
         ("p", "O usuario pode baixar os resultados em Excel e em TXT apos rodar o balanceamento."),
@@ -806,25 +808,30 @@ def make_station_precedence_chart(
     predecessors: Dict[str, Set[str]],
     assignment: Dict[str, int],
     stations: List[Dict],
-    show_internal_edges: bool = False,
+    show_internal_edges: bool = True,
     selected_stations: List[int] = None,
     show_labels: bool = None,
+    manual_y_offsets: Dict[str, float] = None,
 ):
     """Cria um diagrama em colunas por estacao, semelhante ao Flexible Line Balancing.
 
-    A organizacao usa a ordem topologica para distribuir as atividades no eixo vertical.
-    Isso evita que uma atividade fique exatamente sobre outra, mesmo em exemplos grandes.
-    Para instancias grandes, os rotulos sao desligados automaticamente e o usuario pode
-    usar zoom, hover e filtro de estacoes.
+    A organizacao coloca cada estacao em uma coluna e distribui as atividades dessa
+    estacao em faixas verticais. O tamanho dos nos e recalculado automaticamente
+    conforme a quantidade de atividades visiveis. O usuario tambem pode aplicar
+    pequenos ajustes verticais nos nos para melhorar a leitura do desenho.
     """
     if selected_stations is None or len(selected_stations) == 0:
         selected_stations = [st["Estacao"] for st in stations]
 
     selected_station_set = set(int(s) for s in selected_stations)
     visible_stations = [st for st in stations if st["Estacao"] in selected_station_set]
+    visible_stations = sorted(visible_stations, key=lambda item: item["Estacao"])
 
     topo_order = topological_order(activities, predecessors)
     visible_activities = [a for a in topo_order if assignment.get(a) in selected_station_set]
+
+    if manual_y_offsets is None:
+        manual_y_offsets = {}
 
     if not visible_activities or not visible_stations:
         fig = go.Figure()
@@ -838,60 +845,82 @@ def make_station_precedence_chart(
 
     n_visible = len(visible_activities)
     total_activities = len(activities)
-    max_tasks_station = max(len(st["Atividades"]) for st in visible_stations)
+    station_x = {st["Estacao"]: idx + 1 for idx, st in enumerate(visible_stations)}
+    station_tasks = {
+        st["Estacao"]: [a for a in visible_activities if assignment.get(a) == st["Estacao"]]
+        for st in visible_stations
+    }
+    max_tasks_station = max(max(len(tasks), 1) for tasks in station_tasks.values())
 
     if show_labels is None:
         show_labels = n_visible <= 80
 
-    if n_visible <= 40:
-        node_size = 52
-        font_size = 12
-        chart_height = max(620, 82 * max_tasks_station + 180)
-    elif n_visible <= 120:
-        node_size = 34
-        font_size = 10
-        chart_height = max(760, 18 * n_visible + 160)
-    elif n_visible <= 300:
-        node_size = 22
-        font_size = 8
-        chart_height = 1250
+    if max_tasks_station <= 8:
+        chart_height = max(650, max_tasks_station * 95 + 180)
+    elif max_tasks_station <= 25:
+        chart_height = max(800, max_tasks_station * 58 + 180)
+    elif max_tasks_station <= 80:
+        chart_height = max(950, max_tasks_station * 34 + 180)
+    elif max_tasks_station <= 200:
+        chart_height = max(1250, max_tasks_station * 16 + 180)
     else:
-        node_size = 14
+        chart_height = 2600
+    chart_height = min(chart_height, 2600)
+
+    pixels_per_lane = max(4.5, (chart_height - 190) / max(max_tasks_station + 1, 2))
+    node_size = int(max(5, min(58, pixels_per_lane * 0.58)))
+
+    if n_visible <= 80 and node_size >= 32:
+        font_size = 11
+    elif n_visible <= 180 and node_size >= 20:
+        font_size = 9
+    else:
         font_size = 7
-        chart_height = 1650
 
-    chart_height = min(chart_height, 2200)
-
-    y_position = {}
     x_position = {}
-    for idx, act in enumerate(visible_activities):
-        station_number = assignment[act]
-        x_position[act] = station_number
-        y_position[act] = n_visible - idx
+    y_position = {}
+
+    for station_number, tasks in station_tasks.items():
+        k = len(tasks)
+        if k == 0:
+            continue
+        top_lane = max_tasks_station - ((max_tasks_station - k) / 2)
+        for local_idx, act in enumerate(tasks):
+            base_y = top_lane - local_idx
+            base_y += float(manual_y_offsets.get(act, 0.0) or 0.0)
+            x_position[act] = station_x[station_number]
+            y_position[act] = base_y
+
+    y_values_all = list(y_position.values())
+    y_min = min(y_values_all) - 0.8
+    y_max = max(y_values_all) + 0.8
+    y_span_min = max_tasks_station + 1.6
+    if (y_max - y_min) < y_span_min:
+        center = (y_max + y_min) / 2
+        y_min = center - y_span_min / 2
+        y_max = center + y_span_min / 2
 
     fig = go.Figure()
 
-    min_station = min(selected_station_set)
-    max_station = max(selected_station_set)
-
     for st in visible_stations:
         station_number = st["Estacao"]
+        xpos = station_x[station_number]
         color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
         fig.add_vrect(
-            x0=station_number - 0.42,
-            x1=station_number + 0.42,
-            y0=0,
-            y1=n_visible + 1,
+            x0=xpos - 0.42,
+            x1=xpos + 0.42,
+            y0=y_min,
+            y1=y_max,
             fillcolor=color,
             opacity=0.08,
             line_width=0,
             layer="below",
         )
 
-    edge_x = []
-    edge_y = []
+    line_edge_x = []
+    line_edge_y = []
     edge_count = 0
-    edge_limit_for_arrows = 140
+    edge_limit_for_arrows = 180 if n_visible <= 100 else 90
 
     for act in visible_activities:
         for pred in sorted(predecessors[act]):
@@ -906,7 +935,7 @@ def make_station_precedence_chart(
             y2 = y_position[act]
             edge_count += 1
 
-            if edge_count <= edge_limit_for_arrows and n_visible <= 140:
+            if edge_count <= edge_limit_for_arrows and n_visible <= 160:
                 fig.add_annotation(
                     x=x2,
                     y=y2,
@@ -920,22 +949,22 @@ def make_station_precedence_chart(
                     showarrow=True,
                     arrowhead=3,
                     arrowsize=1,
-                    arrowwidth=1.2,
+                    arrowwidth=1.1,
                     arrowcolor="#475569",
-                    standoff=max(8, node_size / 2 - 2),
-                    startstandoff=max(8, node_size / 2 - 2),
+                    standoff=max(4, node_size / 2 - 2),
+                    startstandoff=max(4, node_size / 2 - 2),
                 )
             else:
-                edge_x.extend([x1, x2, None])
-                edge_y.extend([y1, y2, None])
+                line_edge_x.extend([x1, x2, None])
+                line_edge_y.extend([y1, y2, None])
 
-    if edge_x:
+    if line_edge_x:
         fig.add_trace(
             go.Scatter(
-                x=edge_x,
-                y=edge_y,
+                x=line_edge_x,
+                y=line_edge_y,
                 mode="lines",
-                line=dict(color="#64748b", width=1),
+                line=dict(color="#64748b", width=0.9),
                 hoverinfo="skip",
                 showlegend=False,
             )
@@ -943,13 +972,16 @@ def make_station_precedence_chart(
 
     for st in visible_stations:
         station_number = st["Estacao"]
-        tasks = [t for t in visible_activities if assignment[t] == station_number]
+        tasks = station_tasks[station_number]
         color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
         x_values = [x_position[t] for t in tasks]
         y_values = [y_position[t] for t in tasks]
 
         if show_labels:
-            text_values = [f"{t}<br>{times[t]:g}" for t in tasks]
+            if node_size >= 28:
+                text_values = [f"{t}<br>{times[t]:g}" for t in tasks]
+            else:
+                text_values = [f"{t}" for t in tasks]
             mode = "markers+text"
         else:
             text_values = ["" for _ in tasks]
@@ -972,7 +1004,7 @@ def make_station_precedence_chart(
                 marker=dict(
                     size=node_size,
                     color=color,
-                    line=dict(color="#111827", width=1.2),
+                    line=dict(color="#111827", width=1.1),
                 ),
                 textfont=dict(color="white", size=font_size),
                 name=f"Estacao {station_number}",
@@ -991,19 +1023,21 @@ def make_station_precedence_chart(
         paper_bgcolor="white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         hovermode="closest",
+        dragmode="pan",
+        uirevision="precedence_diagram",
     )
     fig.update_xaxes(
         title="Estacao",
-        range=[min_station - 0.65, max_station + 0.65],
+        range=[0.35, len(visible_stations) + 0.65],
         tickmode="array",
-        tickvals=[st["Estacao"] for st in visible_stations],
+        tickvals=[station_x[st["Estacao"]] for st in visible_stations],
         ticktext=[f"Estacao {st['Estacao']}" for st in visible_stations],
         showgrid=False,
         zeroline=False,
     )
     fig.update_yaxes(
-        title="Ordem topologica das atividades",
-        range=[0, n_visible + 1],
+        title="Atividades dentro das estacoes",
+        range=[y_min, y_max],
         showticklabels=False,
         showgrid=False,
         zeroline=False,
@@ -1011,9 +1045,9 @@ def make_station_precedence_chart(
 
     if total_activities >= 120:
         fig.add_annotation(
-            x=min_station,
-            y=n_visible + 0.5,
-            text="Use zoom, hover e filtro de estacoes para analisar redes grandes.",
+            x=1,
+            y=y_max - 0.2,
+            text="Use zoom, hover, filtro de estacoes e ajuste vertical para analisar redes grandes.",
             showarrow=False,
             xanchor="left",
             font=dict(size=11, color="#475569"),
@@ -1434,8 +1468,8 @@ if "last_solution" in st.session_state:
         with cdiag1:
             show_internal_edges = st.checkbox(
                 "Mostrar precedencias internas da mesma estacao",
-                value=False,
-                help="Desmarcado, o desenho destaca as ligacoes entre estacoes e fica mais limpo.",
+                value=True,
+                help="Marcado, o diagrama mostra tambem as relacoes entre atividades alocadas na mesma estacao.",
             )
         with cdiag2:
             show_labels = st.checkbox(
@@ -1443,6 +1477,67 @@ if "last_solution" in st.session_state:
                 value=len(activities) <= 80,
                 help="Para exemplos muito grandes, deixe desmarcado e use o mouse sobre os nos.",
             )
+
+        if "node_offsets" not in st.session_state:
+            st.session_state["node_offsets"] = {}
+        for act in activities:
+            st.session_state["node_offsets"].setdefault(act, 0.0)
+        st.session_state["node_offsets"] = {
+            act: float(st.session_state["node_offsets"].get(act, 0.0))
+            for act in activities
+        }
+
+        manual_y_offsets = dict(st.session_state["node_offsets"])
+        with st.expander("Ajustar posicao vertical dos nos", expanded=False):
+            st.caption(
+                "Use este recurso apenas para melhorar a aparencia do desenho. "
+                "Valores positivos sobem o no e valores negativos descem o no."
+            )
+            visible_for_offset = [
+                act for act in activities
+                if result["assignment"].get(act) in set(selected_stations)
+            ]
+            if st.button("Zerar ajustes verticais", type="secondary"):
+                for act in activities:
+                    st.session_state["node_offsets"][act] = 0.0
+                manual_y_offsets = dict(st.session_state["node_offsets"])
+                st.rerun()
+
+            if visible_for_offset:
+                offset_df = pd.DataFrame(
+                    [
+                        {
+                            "Atividade": act,
+                            "Estacao": result["assignment"][act],
+                            "Ajuste vertical": float(st.session_state["node_offsets"].get(act, 0.0)),
+                        }
+                        for act in visible_for_offset
+                    ]
+                )
+                edited_offsets = st.data_editor(
+                    offset_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    disabled=["Atividade", "Estacao"],
+                    column_config={
+                        "Ajuste vertical": st.column_config.NumberColumn(
+                            "Ajuste vertical",
+                            min_value=-20.0,
+                            max_value=20.0,
+                            step=0.25,
+                            format="%.2f",
+                        )
+                    },
+                    key="offset_editor",
+                )
+                manual_y_offsets = {
+                    row["Atividade"]: float(row["Ajuste vertical"] or 0.0)
+                    for _, row in edited_offsets.iterrows()
+                }
+                for act, offset in manual_y_offsets.items():
+                    st.session_state["node_offsets"][act] = offset
+            else:
+                st.info("Selecione ao menos uma estacao para ajustar os nos.")
 
         fig_prec = make_station_precedence_chart(
             activities,
@@ -1453,16 +1548,17 @@ if "last_solution" in st.session_state:
             show_internal_edges=show_internal_edges,
             selected_stations=selected_stations,
             show_labels=show_labels,
+            manual_y_offsets=manual_y_offsets,
         )
         st.plotly_chart(fig_prec, use_container_width=True)
         if not show_internal_edges:
             st.caption(
-                "As precedencias internas da mesma estacao foram omitidas apenas no desenho. "
+                "As precedencias internas da mesma estacao foram ocultadas apenas no desenho. "
                 "Elas continuam sendo respeitadas no calculo."
             )
         if len(activities) >= 120:
             st.caption(
-                "Para redes grandes, o diagrama fica em modo compacto. Use zoom, hover e filtro de estacoes para analisar partes da rede."
+                "Para redes grandes, o diagrama fica em modo compacto. Use zoom, hover, filtro de estacoes e ajuste vertical para analisar partes da rede."
             )
 
     with tab4:
