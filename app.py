@@ -1114,6 +1114,171 @@ setTimeout(function() {{ network.fit({{animation: false}}); }}, 250);
     return html_doc, container_height + 18
 
 
+
+def make_station_overview_html(
+    stations: List[Dict],
+    predecessors: Dict[str, Set[str]],
+    assignment: Dict[str, int],
+    times: Dict[str, float],
+) -> Tuple[str, int]:
+    if not stations:
+        return "<p>Nenhuma estação para exibir.</p>", 160
+
+    n_stations = len(stations)
+    if n_stations <= 12:
+        n_cols = n_stations
+    elif n_stations <= 40:
+        n_cols = 10
+    elif n_stations <= 120:
+        n_cols = 12
+    else:
+        n_cols = 16
+
+    x_gap = 190 if n_stations <= 120 else 165
+    y_gap = 145 if n_stations <= 120 else 120
+    node_size = 38 if n_stations <= 40 else 30 if n_stations <= 120 else 24
+    font_size = 15 if n_stations <= 40 else 12 if n_stations <= 120 else 10
+
+    station_tasks = {st["Estacao"]: list(st["Atividades"]) for st in stations}
+    station_time = {st["Estacao"]: float(st["Tempo ocupado"]) for st in stations}
+    station_idle = {st["Estacao"]: float(st["Tempo ocioso"]) for st in stations}
+    station_numbers = [st["Estacao"] for st in stations]
+    station_set = set(station_numbers)
+
+    nodes = []
+    station_pos = {}
+    for idx, st in enumerate(stations):
+        station_number = st["Estacao"]
+        row = idx // n_cols
+        col = idx % n_cols
+        x = col * x_gap
+        y = row * y_gap
+        station_pos[station_number] = (x, y)
+        color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
+        task_count = len(station_tasks[station_number])
+        label = f"E{station_number}\n{task_count} ativ.\n{station_time[station_number]:g}"
+        sample_tasks = ", ".join(station_tasks[station_number][:12])
+        if task_count > 12:
+            sample_tasks += f", mais {task_count - 12}"
+        title = (
+            f"Estação: {station_number}<br>"
+            f"Atividades: {task_count}<br>"
+            f"Tempo ocupado: {station_time[station_number]:g}<br>"
+            f"Tempo ocioso: {station_idle[station_number]:g}<br>"
+            f"Lista: {html.escape(sample_tasks)}"
+        )
+        nodes.append(
+            {
+                "id": f"E{station_number}",
+                "label": label,
+                "title": title,
+                "x": x,
+                "y": y,
+                "fixed": {"x": True, "y": True},
+                "size": node_size,
+                "color": {
+                    "background": color,
+                    "border": "#111827",
+                    "highlight": {"background": color, "border": "#020617"},
+                },
+                "font": {"size": font_size, "color": "#ffffff", "face": "Arial", "multi": True},
+                "borderWidth": 2,
+                "shape": "circle",
+            }
+        )
+
+    edge_counter = defaultdict(int)
+    for act, preds in predecessors.items():
+        st_to = assignment.get(act)
+        if st_to not in station_set:
+            continue
+        for pred in preds:
+            st_from = assignment.get(pred)
+            if st_from not in station_set or st_from == st_to:
+                continue
+            edge_counter[(st_from, st_to)] += 1
+
+    edges = []
+    for (st_from, st_to), count in sorted(edge_counter.items()):
+        edges.append(
+            {
+                "from": f"E{st_from}",
+                "to": f"E{st_to}",
+                "arrows": "to",
+                "label": str(count) if count > 1 and n_stations <= 120 else "",
+                "font": {"size": 11, "color": "#334155", "strokeWidth": 3, "strokeColor": "#ffffff"},
+                "color": {"color": "#334155", "highlight": "#0f172a"},
+                "width": min(4.5, 1.0 + math.log(count + 1, 2) * 0.7),
+                "smooth": {"enabled": True, "type": "cubicBezier", "roundness": 0.25},
+            }
+        )
+
+    rows = math.ceil(n_stations / n_cols)
+    container_height = int(max(520, min(1800, rows * y_gap + 160)))
+    nodes_json = json.dumps(nodes, ensure_ascii=False)
+    edges_json = json.dumps(edges, ensure_ascii=False)
+
+    html_doc = f"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+    body {{ margin: 0; font-family: Arial, sans-serif; background: #ffffff; }}
+    #network {{
+        height: {container_height}px;
+        width: 100%;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        background: #ffffff;
+    }}
+</style>
+</head>
+<body>
+<div id="network"></div>
+<script>
+const container = document.getElementById('network');
+function bloquearZoomPelaRoda(event) {{
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return false;
+}}
+container.addEventListener('wheel', bloquearZoomPelaRoda, {{ passive: false, capture: true }});
+container.addEventListener('mousewheel', bloquearZoomPelaRoda, {{ passive: false, capture: true }});
+container.addEventListener('DOMMouseScroll', bloquearZoomPelaRoda, {{ passive: false, capture: true }});
+
+const nodes = new vis.DataSet({nodes_json});
+const edges = new vis.DataSet({edges_json});
+const data = {{ nodes: nodes, edges: edges }};
+const options = {{
+    autoResize: true,
+    layout: {{ improvedLayout: false }},
+    physics: {{ enabled: false }},
+    interaction: {{
+        dragNodes: false,
+        dragView: true,
+        zoomView: true,
+        hover: true,
+        tooltipDelay: 80,
+        navigationButtons: true,
+        keyboard: true
+    }},
+    edges: {{
+        arrows: {{ to: {{ enabled: true, scaleFactor: 0.65 }} }},
+        smooth: {{ enabled: true, type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.25 }},
+        selectionWidth: 2,
+        hoverWidth: 2
+    }}
+}};
+const network = new vis.Network(container, data, options);
+setTimeout(function() {{ network.fit({{animation: false}}); }}, 250);
+</script>
+</body>
+</html>
+"""
+    return html_doc, container_height + 18
+
 def make_gantt_df(stations: List[Dict], times: Dict[str, float]) -> pd.DataFrame:
     rows = []
     for st in stations:
@@ -1634,54 +1799,112 @@ if "last_solution" in st.session_state:
 
     elif result_page == "Diagrama de precedências":
         station_numbers = [st["Estacao"] for st in result["stations"]]
-        selected_stations = st.multiselect(
-            "Estações exibidas no diagrama",
-            options=station_numbers,
-            default=station_numbers,
-            help="Em problemas grandes, selecione apenas algumas estações para melhorar a leitura.",
-            key="station_filter_diagram",
-            on_change=manter_pagina_diagrama,
-        )
-        cdiag1, cdiag2 = st.columns(2)
-        with cdiag1:
-            show_internal_edges = st.checkbox(
-                "Mostrar precedências internas da mesma estação",
-                value=True,
-                help="Marcado, o diagrama mostra também as relações entre atividades alocadas na mesma estação.",
-                key="show_internal_edges_diagram",
+        large_network = len(activities) > 250 or len(station_numbers) > 25
+
+        if large_network:
+            if "diagram_view_mode" not in st.session_state:
+                st.session_state["diagram_view_mode"] = "Visão geral por estações"
+            view_mode = st.radio(
+                "Tipo de visualização",
+                ["Visão geral por estações", "Trecho detalhado por atividades"],
+                horizontal=True,
+                key="diagram_view_mode",
                 on_change=manter_pagina_diagrama,
             )
-        with cdiag2:
-            show_labels = st.checkbox(
-                "Mostrar rótulos nos nós",
-                value=len(activities) <= 80,
-                help="Para exemplos muito grandes, deixe desmarcado e use o mouse sobre os nós.",
-                key="show_labels_diagram",
-                on_change=manter_pagina_diagrama,
-            )
+        else:
+            view_mode = "Trecho detalhado por atividades"
 
-        diagram_html, diagram_height = make_interactive_precedence_html(
-            activities,
-            times,
-            predecessors,
-            result["assignment"],
-            result["stations"],
-            show_internal_edges=show_internal_edges,
-            selected_stations=selected_stations,
-            show_labels=show_labels,
-        )
-        components.html(diagram_html, height=diagram_height, scrolling=True)
+        if view_mode == "Visão geral por estações":
+            st.caption(
+                "Rede grande detectada. A visão geral mostra uma bola por estação. "
+                "As setas indicam precedências entre estações. O número na seta representa quantas ligações existem entre duas estações."
+            )
+            overview_html, overview_height = make_station_overview_html(
+                result["stations"],
+                predecessors,
+                result["assignment"],
+                times,
+            )
+            components.html(overview_html, height=overview_height, scrolling=True)
 
-        if not show_internal_edges:
-            st.caption(
-                "As precedências internas da mesma estação foram ocultadas apenas no desenho. "
-                "Elas continuam sendo respeitadas no cálculo."
+        else:
+            if large_network:
+                default_window = min(8, len(station_numbers))
+                max_window = min(30, len(station_numbers))
+                cwin1, cwin2 = st.columns(2)
+                with cwin1:
+                    window_size = st.slider(
+                        "Quantidade de estações exibidas",
+                        min_value=1,
+                        max_value=max_window,
+                        value=default_window,
+                        key="station_window_size_diagram",
+                        on_change=manter_pagina_diagrama,
+                    )
+                max_start = max(1, len(station_numbers) - window_size + 1)
+                with cwin2:
+                    start_position = st.slider(
+                        "Estação inicial",
+                        min_value=1,
+                        max_value=max_start,
+                        value=1,
+                        key="station_window_start_diagram",
+                        on_change=manter_pagina_diagrama,
+                    )
+                selected_stations = station_numbers[start_position - 1:start_position - 1 + window_size]
+                st.caption(
+                    f"Exibindo da estação {selected_stations[0]} até a estação {selected_stations[-1]}."
+                )
+            else:
+                selected_stations = st.multiselect(
+                    "Estações exibidas no diagrama",
+                    options=station_numbers,
+                    default=station_numbers,
+                    help="Selecione as estações que deseja visualizar.",
+                    key="station_filter_diagram",
+                    on_change=manter_pagina_diagrama,
+                )
+
+            cdiag1, cdiag2 = st.columns(2)
+            with cdiag1:
+                show_internal_edges = st.checkbox(
+                    "Mostrar precedências internas da mesma estação",
+                    value=True,
+                    help="Marcado, o diagrama mostra também as relações entre atividades alocadas na mesma estação.",
+                    key="show_internal_edges_diagram",
+                    on_change=manter_pagina_diagrama,
+                )
+            with cdiag2:
+                selected_count = sum(
+                    len(st["Atividades"])
+                    for st in result["stations"]
+                    if st["Estacao"] in set(selected_stations)
+                )
+                show_labels = st.checkbox(
+                    "Mostrar rótulos nos nós",
+                    value=selected_count <= 80,
+                    help="Para trechos muito grandes, deixe desmarcado e use o mouse sobre os nós.",
+                    key="show_labels_diagram",
+                    on_change=manter_pagina_diagrama,
+                )
+
+            diagram_html, diagram_height = make_interactive_precedence_html(
+                activities,
+                times,
+                predecessors,
+                result["assignment"],
+                result["stations"],
+                show_internal_edges=show_internal_edges,
+                selected_stations=selected_stations,
+                show_labels=show_labels,
             )
-        if len(activities) >= 120:
-            st.caption(
-                "Para redes grandes, use zoom, hover e filtro de estações para analisar partes da rede. "
-                "Os nós podem ser arrastados para melhorar a leitura."
-            )
+            components.html(diagram_html, height=diagram_height, scrolling=True)
+
+            if not show_internal_edges:
+                st.caption(
+                    "As precedências internas da mesma estação foram ocultadas apenas no desenho. "
+                    "Elas continuam sendo respeitadas no cálculo."
+                )
 
     elif result_page == "Gráfico":
         balance_fig = create_balance_chart(
