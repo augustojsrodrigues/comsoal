@@ -818,7 +818,7 @@ def make_station_precedence_chart(
     A organizacao coloca cada estacao em uma coluna e distribui as atividades dessa
     estacao em faixas verticais. O tamanho dos nos e recalculado automaticamente
     conforme a quantidade de atividades visiveis. O usuario tambem pode aplicar
-    pequenos ajustes verticais nos nos para melhorar a leitura do desenho.
+    ajustes verticais individuais nos nos para melhorar a leitura do desenho.
     """
     if selected_stations is None or len(selected_stations) == 0:
         selected_stations = [st["Estacao"] for st in stations]
@@ -892,13 +892,10 @@ def make_station_precedence_chart(
             y_position[act] = base_y
 
     y_values_all = list(y_position.values())
-    y_min = min(y_values_all) - 0.8
-    y_max = max(y_values_all) + 0.8
-    y_span_min = max_tasks_station + 1.6
-    if (y_max - y_min) < y_span_min:
-        center = (y_max + y_min) / 2
-        y_min = center - y_span_min / 2
-        y_max = center + y_span_min / 2
+    base_y_min = 0.2
+    base_y_max = max_tasks_station + 0.8
+    y_min = min(base_y_min, min(y_values_all) - 0.8)
+    y_max = max(base_y_max, max(y_values_all) + 0.8)
 
     fig = go.Figure()
 
@@ -1490,52 +1487,96 @@ if "last_solution" in st.session_state:
         manual_y_offsets = dict(st.session_state["node_offsets"])
         with st.expander("Ajustar posicao vertical dos nos", expanded=False):
             st.caption(
-                "Use este recurso apenas para melhorar a aparencia do desenho. "
-                "Valores positivos sobem o no e valores negativos descem o no."
+                "Escolha uma atividade e mova apenas esse no. "
+                "As setas acompanham automaticamente a nova posicao."
             )
             visible_for_offset = [
                 act for act in activities
                 if result["assignment"].get(act) in set(selected_stations)
             ]
-            if st.button("Zerar ajustes verticais", type="secondary"):
-                for act in activities:
-                    st.session_state["node_offsets"][act] = 0.0
-                manual_y_offsets = dict(st.session_state["node_offsets"])
-                st.rerun()
 
             if visible_for_offset:
-                offset_df = pd.DataFrame(
-                    [
-                        {
-                            "Atividade": act,
-                            "Estacao": result["assignment"][act],
-                            "Ajuste vertical": float(st.session_state["node_offsets"].get(act, 0.0)),
-                        }
-                        for act in visible_for_offset
-                    ]
+                visible_for_offset = sorted(
+                    visible_for_offset,
+                    key=lambda act: (result["assignment"].get(act, 9999), activities.index(act)),
                 )
-                edited_offsets = st.data_editor(
-                    offset_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    disabled=["Atividade", "Estacao"],
-                    column_config={
-                        "Ajuste vertical": st.column_config.NumberColumn(
-                            "Ajuste vertical",
-                            min_value=-20.0,
-                            max_value=20.0,
-                            step=0.25,
-                            format="%.2f",
-                        )
-                    },
-                    key="offset_editor",
+                step_col, select_col = st.columns([1, 3])
+                with step_col:
+                    offset_step = st.number_input(
+                        "Passo",
+                        min_value=0.10,
+                        max_value=5.00,
+                        value=0.50,
+                        step=0.10,
+                        format="%.2f",
+                        help="Tamanho do deslocamento vertical aplicado ao no selecionado.",
+                    )
+                with select_col:
+                    node_to_move = st.selectbox(
+                        "Atividade para reposicionar",
+                        options=visible_for_offset,
+                        format_func=lambda act: f"{act} | Estacao {result['assignment'].get(act)} | ajuste atual {st.session_state['node_offsets'].get(act, 0.0):.2f}",
+                    )
+
+                move_col1, move_col2, move_col3, move_col4 = st.columns(4)
+                with move_col1:
+                    if st.button("Subir selecionada", type="primary", use_container_width=True):
+                        st.session_state["node_offsets"][node_to_move] = float(st.session_state["node_offsets"].get(node_to_move, 0.0)) + float(offset_step)
+                        st.rerun()
+                with move_col2:
+                    if st.button("Descer selecionada", type="primary", use_container_width=True):
+                        st.session_state["node_offsets"][node_to_move] = float(st.session_state["node_offsets"].get(node_to_move, 0.0)) - float(offset_step)
+                        st.rerun()
+                with move_col3:
+                    if st.button("Zerar selecionada", type="secondary", use_container_width=True):
+                        st.session_state["node_offsets"][node_to_move] = 0.0
+                        st.rerun()
+                with move_col4:
+                    if st.button("Zerar todos", type="secondary", use_container_width=True):
+                        for act in activities:
+                            st.session_state["node_offsets"][act] = 0.0
+                        st.rerun()
+
+                st.caption(
+                    f"Ajuste atual de {node_to_move}: "
+                    f"{float(st.session_state['node_offsets'].get(node_to_move, 0.0)):.2f}"
                 )
-                manual_y_offsets = {
-                    row["Atividade"]: float(row["Ajuste vertical"] or 0.0)
-                    for _, row in edited_offsets.iterrows()
-                }
-                for act, offset in manual_y_offsets.items():
-                    st.session_state["node_offsets"][act] = offset
+
+                with st.expander("Ajuste numerico opcional", expanded=False):
+                    st.caption(
+                        "Edite apenas a linha da atividade que deseja alterar. "
+                        "Cada linha controla um unico no."
+                    )
+                    offset_df = pd.DataFrame(
+                        [
+                            {
+                                "Atividade": act,
+                                "Estacao": result["assignment"][act],
+                                "Ajuste vertical": float(st.session_state["node_offsets"].get(act, 0.0)),
+                            }
+                            for act in visible_for_offset
+                        ]
+                    )
+                    edited_offsets = st.data_editor(
+                        offset_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        disabled=["Atividade", "Estacao"],
+                        column_config={
+                            "Ajuste vertical": st.column_config.NumberColumn(
+                                "Ajuste vertical",
+                                min_value=-20.0,
+                                max_value=20.0,
+                                step=0.25,
+                                format="%.2f",
+                            )
+                        },
+                        key="offset_editor",
+                    )
+                    for _, row in edited_offsets.iterrows():
+                        st.session_state["node_offsets"][row["Atividade"]] = float(row["Ajuste vertical"] or 0.0)
+
+                manual_y_offsets = dict(st.session_state["node_offsets"])
             else:
                 st.info("Selecione ao menos uma estacao para ajustar os nos.")
 
