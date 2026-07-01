@@ -32,18 +32,24 @@ st.caption(
 
 SAMPLE_DATA = pd.DataFrame(
     [
-        {"Atividade": "A", "Tempo": 20, "Precedencias": ""},
-        {"Atividade": "B", "Tempo": 6, "Precedencias": "A"},
-        {"Atividade": "C", "Tempo": 5, "Precedencias": "B"},
-        {"Atividade": "D", "Tempo": 21, "Precedencias": ""},
-        {"Atividade": "E", "Tempo": 15, "Precedencias": "C, D"},
-        {"Atividade": "F", "Tempo": 10, "Precedencias": "E"},
-        {"Atividade": "G", "Tempo": 35, "Precedencias": ""},
-        {"Atividade": "H", "Tempo": 8, "Precedencias": ""},
-        {"Atividade": "I", "Tempo": 15, "Precedencias": "F, H"},
-        {"Atividade": "J", "Tempo": 5, "Precedencias": "C"},
-        {"Atividade": "K", "Tempo": 40, "Precedencias": "G, I, J"},
-        {"Atividade": "L", "Tempo": 16, "Precedencias": "K"},
+        {"Atividade": "A", "Tempo": 12, "Precedencias": ""},
+        {"Atividade": "B", "Tempo": 10, "Precedencias": "A"},
+        {"Atividade": "C", "Tempo": 8, "Precedencias": "A"},
+        {"Atividade": "D", "Tempo": 15, "Precedencias": "B"},
+        {"Atividade": "E", "Tempo": 7, "Precedencias": "B, C"},
+        {"Atividade": "F", "Tempo": 12, "Precedencias": "C"},
+        {"Atividade": "G", "Tempo": 9, "Precedencias": "D"},
+        {"Atividade": "H", "Tempo": 10, "Precedencias": "D, E"},
+        {"Atividade": "I", "Tempo": 6, "Precedencias": "E"},
+        {"Atividade": "J", "Tempo": 11, "Precedencias": "F"},
+        {"Atividade": "K", "Tempo": 8, "Precedencias": "G, H"},
+        {"Atividade": "L", "Tempo": 14, "Precedencias": "H, I"},
+        {"Atividade": "M", "Tempo": 7, "Precedencias": "J"},
+        {"Atividade": "N", "Tempo": 10, "Precedencias": "K, L"},
+        {"Atividade": "O", "Tempo": 8, "Precedencias": "M, N"},
+        {"Atividade": "P", "Tempo": 6, "Precedencias": "O"},
+        {"Atividade": "Q", "Tempo": 9, "Precedencias": "I, J"},
+        {"Atividade": "R", "Tempo": 5, "Precedencias": "L, Q"},
     ]
 )
 
@@ -288,8 +294,10 @@ def make_manual_pdf_bytes() -> bytes:
         ("p", "O sistema mostra a quantidade de estacoes, minimo teorico, eficiencia, tempo ocioso, atraso de balanceamento e indice de suavidade."),
         ("p", "Tambem gera a tabela de estacoes, a tabela de atividades, o diagrama de precedencias por estacao e o grafico de ocupacao por estacao."),
         ("h1", "9. Diagrama de precedencias por estacao"),
-        ("p", "O diagrama usa cores para identificar as estacoes. Para facilitar a leitura, a visualizacao principal mostra as ligacoes entre estacoes e omite ligacoes internas da mesma estacao."),
+        ("p", "O diagrama usa cores para identificar as estacoes e posiciona as atividades em colunas por estacao, em uma forma parecida com softwares de balanceamento de linha."),
+        ("p", "Para facilitar a leitura, a visualizacao principal mostra as ligacoes entre estacoes e omite ligacoes internas da mesma estacao."),
         ("p", "Mesmo quando uma ligacao interna nao aparece no desenho, a precedencia continua sendo respeitada pelo calculo."),
+        ("p", "Em exemplos grandes, use o filtro de estacoes, zoom e o mouse sobre os nos para ler as atividades sem poluir o grafico."),
         ("h1", "10. Downloads"),
         ("p", "O usuario pode baixar os resultados em Excel e em TXT apos rodar o balanceamento."),
     ]
@@ -799,116 +807,219 @@ def make_station_precedence_chart(
     assignment: Dict[str, int],
     stations: List[Dict],
     show_internal_edges: bool = False,
+    selected_stations: List[int] = None,
+    show_labels: bool = None,
 ):
-    levels = precedence_levels(activities, predecessors)
-    nstations = len(stations)
+    """Cria um diagrama em colunas por estacao, semelhante ao Flexible Line Balancing.
 
-    position = {}
-    same_cell_count = defaultdict(int)
-    same_cell_index = defaultdict(int)
-    for act in activities:
-        key = (assignment[act], levels[act])
-        same_cell_count[key] += 1
+    A organizacao usa a ordem topologica para distribuir as atividades no eixo vertical.
+    Isso evita que uma atividade fique exatamente sobre outra, mesmo em exemplos grandes.
+    Para instancias grandes, os rotulos sao desligados automaticamente e o usuario pode
+    usar zoom, hover e filtro de estacoes.
+    """
+    if selected_stations is None or len(selected_stations) == 0:
+        selected_stations = [st["Estacao"] for st in stations]
 
-    for st in stations:
-        station_number = st["Estacao"]
-        tasks = sorted(st["Atividades"], key=lambda a: (levels[a], st["Atividades"].index(a)))
-        for task in tasks:
-            key = (station_number, levels[task])
-            idx = same_cell_index[key]
-            count = same_cell_count[key]
-            same_cell_index[key] += 1
-            offset = 0 if count == 1 else (idx - (count - 1) / 2) * 0.18
-            x = levels[task]
-            y = nstations - station_number + 1 + offset
-            position[task] = (x, y)
+    selected_station_set = set(int(s) for s in selected_stations)
+    visible_stations = [st for st in stations if st["Estacao"] in selected_station_set]
+
+    topo_order = topological_order(activities, predecessors)
+    visible_activities = [a for a in topo_order if assignment.get(a) in selected_station_set]
+
+    if not visible_activities or not visible_stations:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Diagrama de precedencias por estacao",
+            height=500,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+        )
+        return fig
+
+    n_visible = len(visible_activities)
+    total_activities = len(activities)
+    max_tasks_station = max(len(st["Atividades"]) for st in visible_stations)
+
+    if show_labels is None:
+        show_labels = n_visible <= 80
+
+    if n_visible <= 40:
+        node_size = 52
+        font_size = 12
+        chart_height = max(620, 82 * max_tasks_station + 180)
+    elif n_visible <= 120:
+        node_size = 34
+        font_size = 10
+        chart_height = max(760, 18 * n_visible + 160)
+    elif n_visible <= 300:
+        node_size = 22
+        font_size = 8
+        chart_height = 1250
+    else:
+        node_size = 14
+        font_size = 7
+        chart_height = 1650
+
+    chart_height = min(chart_height, 2200)
+
+    y_position = {}
+    x_position = {}
+    for idx, act in enumerate(visible_activities):
+        station_number = assignment[act]
+        x_position[act] = station_number
+        y_position[act] = n_visible - idx
 
     fig = go.Figure()
 
-    for act, preds in predecessors.items():
-        for pred in sorted(preds):
+    min_station = min(selected_station_set)
+    max_station = max(selected_station_set)
+
+    for st in visible_stations:
+        station_number = st["Estacao"]
+        color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
+        fig.add_vrect(
+            x0=station_number - 0.42,
+            x1=station_number + 0.42,
+            y0=0,
+            y1=n_visible + 1,
+            fillcolor=color,
+            opacity=0.08,
+            line_width=0,
+            layer="below",
+        )
+
+    edge_x = []
+    edge_y = []
+    edge_count = 0
+    edge_limit_for_arrows = 140
+
+    for act in visible_activities:
+        for pred in sorted(predecessors[act]):
+            if pred not in x_position:
+                continue
             if not show_internal_edges and assignment.get(pred) == assignment.get(act):
                 continue
-            x1, y1 = position[pred]
-            x2, y2 = position[act]
-            fig.add_annotation(
-                x=x2,
-                y=y2,
-                ax=x1,
-                ay=y1,
-                xref="x",
-                yref="y",
-                axref="x",
-                ayref="y",
-                text="",
-                showarrow=True,
-                arrowhead=3,
-                arrowsize=1,
-                arrowwidth=1.4,
-                arrowcolor="#475569",
-                standoff=20,
-                startstandoff=20,
-            )
 
-    for st in stations:
+            x1 = x_position[pred]
+            y1 = y_position[pred]
+            x2 = x_position[act]
+            y2 = y_position[act]
+            edge_count += 1
+
+            if edge_count <= edge_limit_for_arrows and n_visible <= 140:
+                fig.add_annotation(
+                    x=x2,
+                    y=y2,
+                    ax=x1,
+                    ay=y1,
+                    xref="x",
+                    yref="y",
+                    axref="x",
+                    ayref="y",
+                    text="",
+                    showarrow=True,
+                    arrowhead=3,
+                    arrowsize=1,
+                    arrowwidth=1.2,
+                    arrowcolor="#475569",
+                    standoff=max(8, node_size / 2 - 2),
+                    startstandoff=max(8, node_size / 2 - 2),
+                )
+            else:
+                edge_x.extend([x1, x2, None])
+                edge_y.extend([y1, y2, None])
+
+    if edge_x:
+        fig.add_trace(
+            go.Scatter(
+                x=edge_x,
+                y=edge_y,
+                mode="lines",
+                line=dict(color="#64748b", width=1),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    for st in visible_stations:
         station_number = st["Estacao"]
-        tasks = st["Atividades"]
+        tasks = [t for t in visible_activities if assignment[t] == station_number]
         color = STATION_COLORS[(station_number - 1) % len(STATION_COLORS)]
-        x_values = [position[t][0] for t in tasks]
-        y_values = [position[t][1] for t in tasks]
-        text_values = [f"{t}<br>{times[t]:g}" for t in tasks]
+        x_values = [x_position[t] for t in tasks]
+        y_values = [y_position[t] for t in tasks]
+
+        if show_labels:
+            text_values = [f"{t}<br>{times[t]:g}" for t in tasks]
+            mode = "markers+text"
+        else:
+            text_values = ["" for _ in tasks]
+            mode = "markers"
+
         hover_values = [
             f"Atividade: {t}<br>Tempo: {times[t]:g}<br>Estacao: {station_number}<br>Precedencias: {', '.join(sorted(predecessors[t])) if predecessors[t] else 'nenhuma'}"
             for t in tasks
         ]
+
         fig.add_trace(
             go.Scatter(
                 x=x_values,
                 y=y_values,
-                mode="markers+text",
+                mode=mode,
                 text=text_values,
                 textposition="middle center",
                 hovertext=hover_values,
                 hoverinfo="text",
                 marker=dict(
-                    size=54,
+                    size=node_size,
                     color=color,
-                    line=dict(color="#111827", width=1.5),
+                    line=dict(color="#111827", width=1.2),
                 ),
-                textfont=dict(color="white", size=12),
+                textfont=dict(color="white", size=font_size),
                 name=f"Estacao {station_number}",
             )
         )
 
-    max_level = max(levels.values()) if levels else 1
+    title_extra = ""
+    if total_activities >= 120:
+        title_extra = " | visualizacao compacta para instancia grande"
+
     fig.update_layout(
-        title="Diagrama de precedencias por estacao",
-        height=max(520, 120 * nstations),
-        margin=dict(l=50, r=30, t=70, b=50),
+        title=f"Diagrama de precedencias por estacao{title_extra}",
+        height=chart_height,
+        margin=dict(l=40, r=30, t=80, b=70),
         plot_bgcolor="white",
         paper_bgcolor="white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="closest",
     )
     fig.update_xaxes(
-        title="Nivel de precedencia",
-        range=[0.5, max_level + 0.7],
-        dtick=1,
-        showgrid=True,
-        gridcolor="#e5e7eb",
+        title="Estacao",
+        range=[min_station - 0.65, max_station + 0.65],
+        tickmode="array",
+        tickvals=[st["Estacao"] for st in visible_stations],
+        ticktext=[f"Estacao {st['Estacao']}" for st in visible_stations],
+        showgrid=False,
         zeroline=False,
     )
     fig.update_yaxes(
-        title="Estacao",
-        tickmode="array",
-        tickvals=[nstations - st["Estacao"] + 1 for st in stations],
-        ticktext=[f"Estacao {st['Estacao']}" for st in stations],
-        range=[0.3, nstations + 0.7],
-        showgrid=True,
-        gridcolor="#f1f5f9",
+        title="Ordem topologica das atividades",
+        range=[0, n_visible + 1],
+        showticklabels=False,
+        showgrid=False,
         zeroline=False,
     )
-    return fig
 
+    if total_activities >= 120:
+        fig.add_annotation(
+            x=min_station,
+            y=n_visible + 0.5,
+            text="Use zoom, hover e filtro de estacoes para analisar redes grandes.",
+            showarrow=False,
+            xanchor="left",
+            font=dict(size=11, color="#475569"),
+        )
+
+    return fig
 
 def make_gantt_df(stations: List[Dict], times: Dict[str, float]) -> pd.DataFrame:
     rows = []
@@ -1099,7 +1210,7 @@ with st.sidebar:
     cycle_time = st.number_input(
         "Tempo de ciclo",
         min_value=0.01,
-        value=47.0,
+        value=40.0,
         step=1.0,
         help="Tempo maximo disponivel em cada estacao.",
     )
@@ -1312,11 +1423,27 @@ if "last_solution" in st.session_state:
         st.dataframe(tasks_df, use_container_width=True)
 
     with tab3:
-        show_internal_edges = st.checkbox(
-            "Mostrar tambem precedencias internas da mesma estacao",
-            value=False,
-            help="Desmarcado, o desenho fica mais parecido com o Flexible Line Balancing, destacando apenas ligacoes entre estacoes.",
+        station_numbers = [st["Estacao"] for st in result["stations"]]
+        selected_stations = st.multiselect(
+            "Estacoes exibidas no diagrama",
+            options=station_numbers,
+            default=station_numbers,
+            help="Em problemas grandes, selecione apenas algumas estacoes para melhorar a leitura.",
         )
+        cdiag1, cdiag2 = st.columns(2)
+        with cdiag1:
+            show_internal_edges = st.checkbox(
+                "Mostrar precedencias internas da mesma estacao",
+                value=False,
+                help="Desmarcado, o desenho destaca as ligacoes entre estacoes e fica mais limpo.",
+            )
+        with cdiag2:
+            show_labels = st.checkbox(
+                "Mostrar rotulos nos nos",
+                value=len(activities) <= 80,
+                help="Para exemplos muito grandes, deixe desmarcado e use o mouse sobre os nos.",
+            )
+
         fig_prec = make_station_precedence_chart(
             activities,
             times,
@@ -1324,12 +1451,18 @@ if "last_solution" in st.session_state:
             result["assignment"],
             result["stations"],
             show_internal_edges=show_internal_edges,
+            selected_stations=selected_stations,
+            show_labels=show_labels,
         )
         st.plotly_chart(fig_prec, use_container_width=True)
         if not show_internal_edges:
             st.caption(
                 "As precedencias internas da mesma estacao foram omitidas apenas no desenho. "
                 "Elas continuam sendo respeitadas no calculo."
+            )
+        if len(activities) >= 120:
+            st.caption(
+                "Para redes grandes, o diagrama fica em modo compacto. Use zoom, hover e filtro de estacoes para analisar partes da rede."
             )
 
     with tab4:
