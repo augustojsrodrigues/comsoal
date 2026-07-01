@@ -980,11 +980,6 @@ def make_interactive_precedence_html(
 <style>
     body {{ margin: 0; font-family: Arial, sans-serif; background: #ffffff; }}
     #diagram-wrapper {{ width: 100%; }}
-    #diagram-help {{
-        font-size: 13px;
-        color: #475569;
-        padding: 6px 4px 10px 4px;
-    }}
     #network {{
         height: {container_height}px;
         width: 100%;
@@ -996,7 +991,6 @@ def make_interactive_precedence_html(
 </head>
 <body>
 <div id="diagram-wrapper">
-    <div id="diagram-help">Clique em uma atividade e arraste para cima ou para baixo. A posição fica salva no navegador. Use os botões do diagrama para aproximar ou afastar. A roda do mouse foi bloqueada para evitar zoom acidental.</div>
     <div id="network"></div>
 </div>
 <script>
@@ -1092,7 +1086,7 @@ network.on('beforeDrawing', function(ctx) {{
         ctx.fillStyle = '#475569';
         ctx.textAlign = 'center';
         ctx.font = '16px Arial';
-        ctx.fillText(st.label, st.x, bottomRight.y - 22);
+        ctx.fillText(st.label, st.x, topLeft.y + 28);
     }});
     ctx.restore();
 }});
@@ -1117,7 +1111,7 @@ setTimeout(function() {{ network.fit({{animation: false}}); }}, 250);
 </body>
 </html>
 """
-    return html_doc, container_height + 56
+    return html_doc, container_height + 18
 
 
 def make_gantt_df(stations: List[Dict], times: Dict[str, float]) -> pd.DataFrame:
