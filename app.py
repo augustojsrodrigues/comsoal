@@ -1,3 +1,4 @@
+import hashlib
 import html
 import io
 import json
@@ -827,66 +828,60 @@ def make_interactive_precedence_html(
     assignment: Dict[str, int],
     stations: List[Dict],
     show_internal_edges: bool = True,
-    selected_stations: List[int] = None,
+    selected_stations: List[int] | None = None,
     show_labels: bool = True,
 ) -> Tuple[str, int]:
-    """Cria um diagrama interativo com nós arrastáveis.
+    station_tasks = {st["Estacao"]: list(st["Atividades"]) for st in stations}
+    station_numbers = [st["Estacao"] for st in stations]
 
-    O desenho usa colunas por estação. O usuário pode clicar em uma atividade e
-    arrastar para cima ou para baixo. As setas acompanham o movimento no próprio
-    navegador.
-    """
-    if selected_stations is None or len(selected_stations) == 0:
-        selected_stations = [st["Estacao"] for st in stations]
-
-    selected_station_set = set(int(s) for s in selected_stations)
-    visible_stations = [st for st in stations if st["Estacao"] in selected_station_set]
-    visible_stations = sorted(visible_stations, key=lambda item: item["Estacao"])
-
-    topo_order = topological_order(activities, predecessors)
-    visible_activities = [a for a in topo_order if assignment.get(a) in selected_station_set]
-
-    if not visible_activities or not visible_stations:
-        empty_html = """
-        <div style='font-family: Arial, sans-serif; padding: 20px; color: #475569;'>
-            Selecione ao menos uma estação para exibir o diagrama.
-        </div>
-        """
-        return empty_html, 180
-
-    n_visible = len(visible_activities)
-    station_tasks = {
-        st["Estacao"]: [a for a in visible_activities if assignment.get(a) == st["Estacao"]]
-        for st in visible_stations
-    }
-    max_tasks_station = max(max(len(tasks), 1) for tasks in station_tasks.values())
-
-    if n_visible <= 40:
-        node_size = 30
-        font_size = 14
-        y_gap = 78
-        height = max(620, max_tasks_station * y_gap + 190)
-    elif n_visible <= 100:
-        node_size = 23
-        font_size = 11
-        y_gap = 54
-        height = max(720, max_tasks_station * y_gap + 190)
-    elif n_visible <= 250:
-        node_size = 16
-        font_size = 9
-        y_gap = 34
-        height = max(850, min(1300, max_tasks_station * y_gap + 190))
+    if selected_stations:
+        selected = set(selected_stations)
+        visible_stations = [st for st in stations if st["Estacao"] in selected]
     else:
-        node_size = 10
+        visible_stations = stations
+
+    visible_activities = []
+    for st in visible_stations:
+        visible_activities.extend(station_tasks[st["Estacao"]])
+    visible_set = set(visible_activities)
+
+    if not visible_stations:
+        return "<p>Nenhuma estação selecionada.</p>", 160
+
+    max_tasks_station = max(len(station_tasks[st["Estacao"]]) for st in visible_stations)
+    n_visible = len(visible_activities)
+
+    if n_visible <= 30:
+        node_size = 34
+        font_size = 15
+        y_gap = 88
+        height = max(700, max_tasks_station * y_gap + 240)
+    elif n_visible <= 80:
+        node_size = 25
+        font_size = 12
+        y_gap = 64
+        height = max(760, max_tasks_station * y_gap + 220)
+    elif n_visible <= 160:
+        node_size = 18
+        font_size = 9
+        y_gap = 42
+        height = max(850, min(1400, max_tasks_station * y_gap + 220))
+    elif n_visible <= 300:
+        node_size = 13
         font_size = 7
-        y_gap = 22
-        height = max(950, min(1550, max_tasks_station * y_gap + 190))
+        y_gap = 30
+        height = max(920, min(1600, max_tasks_station * y_gap + 220))
+    else:
+        node_size = 8
+        font_size = 1 if not show_labels else 6
+        y_gap = 20
+        height = max(950, min(1800, max_tasks_station * y_gap + 220))
 
     if not show_labels:
-        font_size = max(1, font_size - 2)
+        font_size = 1
 
-    station_gap = 270 if n_visible <= 120 else 230
-    station_width = int(station_gap * 0.72)
+    station_gap = 280 if n_visible <= 100 else 225 if n_visible <= 300 else 170
+    station_width = int(station_gap * 0.74)
     station_x = {st["Estacao"]: idx * station_gap for idx, st in enumerate(visible_stations)}
 
     nodes = []
@@ -929,6 +924,7 @@ def make_interactive_precedence_html(
                     "title": node_title,
                     "x": x,
                     "y": y,
+                    "fixed": {"x": True, "y": False},
                     "size": node_size,
                     "color": {
                         "background": color,
@@ -945,7 +941,7 @@ def make_interactive_precedence_html(
     edges = []
     for act in visible_activities:
         for pred in sorted(predecessors[act]):
-            if pred not in original_x:
+            if pred not in visible_set:
                 continue
             if not show_internal_edges and assignment.get(pred) == assignment.get(act):
                 continue
@@ -954,16 +950,26 @@ def make_interactive_precedence_html(
                     "from": pred,
                     "to": act,
                     "arrows": "to",
-                    "color": {"color": "#475569", "highlight": "#0f172a"},
-                    "width": 1.2,
+                    "color": {"color": "#334155", "highlight": "#0f172a"},
+                    "width": 1.35,
                 }
             )
+
+    diagram_signature = {
+        "activities": visible_activities,
+        "assignment": {act: assignment.get(act) for act in visible_activities},
+        "stations": [st["Estacao"] for st in visible_stations],
+    }
+    storage_key = "balanceamento_linha_posicoes_" + hashlib.md5(
+        json.dumps(diagram_signature, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
     container_height = int(height)
     nodes_json = json.dumps(nodes, ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
     station_defs_json = json.dumps(station_defs, ensure_ascii=False)
     original_x_json = json.dumps(original_x, ensure_ascii=False)
+    storage_key_json = json.dumps(storage_key, ensure_ascii=False)
 
     html_doc = f"""
 <!DOCTYPE html>
@@ -990,16 +996,52 @@ def make_interactive_precedence_html(
 </head>
 <body>
 <div id="diagram-wrapper">
-    <div id="diagram-help">Clique em uma atividade e arraste para cima ou para baixo. Use a roda do mouse para aproximar ou afastar.</div>
+    <div id="diagram-help">Clique em uma atividade e arraste para cima ou para baixo. A posição fica salva no navegador. Use a roda do mouse para aproximar ou afastar.</div>
     <div id="network"></div>
 </div>
 <script>
-const nodes = new vis.DataSet({nodes_json});
+const storageKey = {storage_key_json};
+const baseNodes = {nodes_json};
 const edges = new vis.DataSet({edges_json});
 const stationDefs = {station_defs_json};
 const originalX = {original_x_json};
 const stationWidth = {station_width};
 const container = document.getElementById('network');
+
+function readSavedPositions() {{
+    try {{
+        const raw = window.localStorage.getItem(storageKey);
+        if (!raw) {{ return {{}}; }}
+        return JSON.parse(raw) || {{}};
+    }} catch (error) {{
+        return {{}};
+    }}
+}}
+
+function savePositions(nodeIds) {{
+    const saved = readSavedPositions();
+    const positions = network.getPositions(nodeIds);
+    nodeIds.forEach(function(id) {{
+        if (positions[id] && Number.isFinite(positions[id].y)) {{
+            saved[id] = {{ y: positions[id].y }};
+            nodes.update({{ id: id, x: originalX[id], y: positions[id].y, fixed: {{ x: true, y: false }} }});
+        }}
+    }});
+    try {{
+        window.localStorage.setItem(storageKey, JSON.stringify(saved));
+    }} catch (error) {{}}
+}}
+
+const savedPositions = readSavedPositions();
+baseNodes.forEach(function(node) {{
+    if (savedPositions[node.id] && Number.isFinite(savedPositions[node.id].y)) {{
+        node.y = savedPositions[node.id].y;
+    }}
+    node.x = originalX[node.id];
+    node.fixed = {{ x: true, y: false }};
+}});
+
+const nodes = new vis.DataSet(baseNodes);
 const data = {{ nodes: nodes, edges: edges }};
 const options = {{
     autoResize: true,
@@ -1011,7 +1053,7 @@ const options = {{
         zoomView: true,
         hover: true,
         tooltipDelay: 80,
-        multiselect: true,
+        multiselect: false,
         navigationButtons: true,
         keyboard: true
     }},
@@ -1047,18 +1089,17 @@ network.on('beforeDrawing', function(ctx) {{
 
 network.on('dragging', function(params) {{
     if (!params.nodes || params.nodes.length === 0) {{ return; }}
+    const positions = network.getPositions(params.nodes);
     params.nodes.forEach(function(id) {{
-        const current = nodes.get(id);
-        nodes.update({{id: id, x: originalX[id], y: current.y}});
+        if (positions[id] && Number.isFinite(positions[id].y)) {{
+            nodes.update({{ id: id, x: originalX[id], y: positions[id].y, fixed: {{ x: true, y: false }} }});
+        }}
     }});
 }});
 
 network.on('dragEnd', function(params) {{
     if (!params.nodes || params.nodes.length === 0) {{ return; }}
-    params.nodes.forEach(function(id) {{
-        const current = nodes.get(id);
-        nodes.update({{id: id, x: originalX[id], y: current.y}});
-    }});
+    savePositions(params.nodes);
 }});
 
 setTimeout(function() {{ network.fit({{animation: false}}); }}, 250);
@@ -1106,22 +1147,83 @@ def create_gantt_chart(gantt_df: pd.DataFrame, cycle_time: float):
             hovertemplate=(
                 "Estação: %{y}<br>"
                 "Atividade: " + str(row["Atividade"]) + "<br>"
-                "Inicio: " + f"{row['Inicio no ciclo']:g}" + "<br>"
+                "Início: " + f"{row['Inicio no ciclo']:g}" + "<br>"
                 "Fim: " + f"{row['Fim no ciclo']:g}" + "<br>"
                 "Duração: " + f"{row['Duracao']:g}" + "<extra></extra>"
             ),
         )
 
+    station_count = gantt_df["Estação"].nunique()
     fig.update_layout(
-        title="Distribuição das atividades por estação",
+        title="Distribuição das atividades dentro do ciclo",
         barmode="stack",
         showlegend=False,
-        height=140 + 60 * gantt_df["Estação"].nunique(),
+        height=170 + 58 * station_count,
         xaxis_title="Tempo dentro do ciclo",
         yaxis_title="Estação",
+        margin=dict(l=30, r=30, t=70, b=45),
     )
-    fig.update_xaxes(range=[0, cycle_time])
-    fig.update_yaxes(autorange="reversed")
+    fig.add_vline(
+        x=cycle_time,
+        line_dash="dash",
+        line_width=2,
+        line_color="#ef4444",
+        annotation_text=f"Tempo de ciclo = {cycle_time:g}",
+        annotation_position="top right",
+    )
+    fig.update_xaxes(range=[0, cycle_time * 1.05], gridcolor="#e5e7eb")
+    fig.update_yaxes(autorange="reversed", gridcolor="#f1f5f9")
+    return fig
+
+
+def create_balance_chart(stations_df: pd.DataFrame, cycle_time: float, efficiency: float):
+    if stations_df.empty:
+        return None
+
+    df = stations_df.copy()
+    fig = go.Figure()
+    for _, row in df.iterrows():
+        station_label = f"E{int(row['Estação'])}"
+        activities = [a.strip() for a in str(row["Atividades"]).split(",") if a.strip()]
+        station_time = float(row["Tempo ocupado"])
+        if activities:
+            equal_height = station_time / len(activities) if len(activities) else station_time
+            for task in activities:
+                fig.add_bar(
+                    x=[station_label],
+                    y=[equal_height],
+                    text=[task],
+                    textposition="inside",
+                    name=task,
+                    hovertemplate=(
+                        "Estação: " + station_label + "<br>"
+                        "Atividade: " + task + "<br>"
+                        "Tempo total da estação: " + f"{station_time:g}" + "<extra></extra>"
+                    ),
+                )
+        else:
+            fig.add_bar(x=[station_label], y=[0], text=[""], showlegend=False)
+
+    fig.add_hline(
+        y=cycle_time,
+        line_dash="dash",
+        line_width=2,
+        line_color="#ef4444",
+        annotation_text=f"Tempo de ciclo = {cycle_time:g}",
+        annotation_position="top left",
+    )
+
+    fig.update_layout(
+        title=f"Resultado do balanceamento da linha | Eficiência: {efficiency:.2f}%",
+        barmode="stack",
+        showlegend=False,
+        height=520,
+        xaxis_title="Estação de trabalho",
+        yaxis_title="Tempo acumulado na estação",
+        margin=dict(l=40, r=30, t=80, b=45),
+    )
+    fig.update_xaxes(gridcolor="#f1f5f9")
+    fig.update_yaxes(range=[0, max(cycle_time * 1.12, df["Tempo ocupado"].max() * 1.12)], gridcolor="#e5e7eb")
     return fig
 
 
@@ -1463,11 +1565,19 @@ if "last_solution" in st.session_state:
 
     st.subheader("Resumo")
     m = result["metrics"]
+    numero_estacoes = m.get("Número de estações", len(result["stations"]))
+    minimo_teorico = m.get(
+        "Mínimo teórico de estações",
+        math.ceil(m.get("Tempo total das atividades", 0) / m.get("Tempo de ciclo", 1)),
+    )
+    eficiencia_linha = m.get("Eficiência da linha (%)", 0.0)
+    tempo_ocioso_total = m.get("Tempo ocioso total", 0.0)
+
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Estações", int(m["Número de estações"]))
-    col2.metric("Mínimo teórico", int(m["Mínimo teórico de estações"]))
-    col3.metric("Eficiência", f"{m['Eficiência da linha (%)']:.2f}%")
-    col4.metric("Tempo ocioso total", f"{m['Tempo ocioso total']:.2f}")
+    col1.metric("Estações", int(numero_estacoes))
+    col2.metric("Mínimo teórico", int(minimo_teorico))
+    col3.metric("Eficiência", f"{eficiencia_linha:.2f}%")
+    col4.metric("Tempo ocioso total", f"{tempo_ocioso_total:.2f}")
 
     st.info(
         f"Heurística utilizada: **{heuristic_label}**. "
@@ -1485,6 +1595,9 @@ if "last_solution" in st.session_state:
         key="result_page",
     )
 
+    def manter_pagina_diagrama() -> None:
+        st.session_state["result_page"] = "Diagrama de precedências"
+
     if result_page == "Estações":
         st.dataframe(stations_df, use_container_width=True)
         st.dataframe(metrics_df, use_container_width=True)
@@ -1500,6 +1613,7 @@ if "last_solution" in st.session_state:
             default=station_numbers,
             help="Em problemas grandes, selecione apenas algumas estações para melhorar a leitura.",
             key="station_filter_diagram",
+            on_change=manter_pagina_diagrama,
         )
         cdiag1, cdiag2 = st.columns(2)
         with cdiag1:
@@ -1508,6 +1622,7 @@ if "last_solution" in st.session_state:
                 value=True,
                 help="Marcado, o diagrama mostra também as relações entre atividades alocadas na mesma estação.",
                 key="show_internal_edges_diagram",
+                on_change=manter_pagina_diagrama,
             )
         with cdiag2:
             show_labels = st.checkbox(
@@ -1515,6 +1630,7 @@ if "last_solution" in st.session_state:
                 value=len(activities) <= 80,
                 help="Para exemplos muito grandes, deixe desmarcado e use o mouse sobre os nós.",
                 key="show_labels_diagram",
+                on_change=manter_pagina_diagrama,
             )
 
         diagram_html, diagram_height = make_interactive_precedence_html(
@@ -1541,7 +1657,15 @@ if "last_solution" in st.session_state:
             )
 
     elif result_page == "Gráfico":
-        fig = create_gantt_chart(gantt_df, m["Tempo de ciclo"])
+        balance_fig = create_balance_chart(
+            stations_df,
+            m.get("Tempo de ciclo", cycle_time),
+            m.get("Eficiência da linha (%)", 0.0),
+        )
+        if balance_fig is not None:
+            st.plotly_chart(balance_fig, use_container_width=True)
+
+        fig = create_gantt_chart(gantt_df, m.get("Tempo de ciclo", cycle_time))
         if fig is not None:
             st.plotly_chart(fig, use_container_width=True)
 
